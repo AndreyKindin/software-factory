@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+: "${CODEX_HOME:?CODEX_HOME muss auf den Factory-Login zeigen}"
+
+unset CODEX_API_KEY OPENAI_API_KEY CODEX_ACCESS_TOKEN
+unset OPENAI_FEDERATION_RULE_ID OPENAI_IDENTITY_TOKEN_FILE OPENAI_WORKLOAD_IDENTITY_CONTEXT
+
+if [ "${1:-}" != login ] || [ "${2:-}" = status ]; then
+  if ! jq -e '.auth_mode == "chatgpt" and ((.tokens.refresh_token // "") != "")' \
+    "$CODEX_HOME/auth.json" >/dev/null 2>&1; then
+    echo "Kein gespeicherter ChatGPT-Login. Auf dem Server: sudo bash scripts/codex-auth.sh login" >&2
+    exit 1
+  fi
+fi
+
+exec codex -c 'forced_login_method="chatgpt"' -c 'cli_auth_credentials_store="file"' "$@"

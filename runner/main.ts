@@ -37,6 +37,10 @@ type Phase = "check" | "build" | "accept";
 type Mode = "new" | "answer" | "change-request" | "retry" | "rework";
 
 const CONFIG_PATH = process.env.FACTORY_CONFIG ?? "/etc/software-factory/config.json";
+const CODEX_AUTH_ARGS = [
+  "--mount", "type=bind,source=/etc/software-factory/codex-auth,target=/codex-auth",
+  "-e", "CODEX_HOME=/codex-auth",
+];
 const MARK = "<!-- software-factory:";
 // Status eines Issues (Label factory:<status>) und die Spalte dazu auf dem Board
 const STATUS: Record<string, { name: string; color: string; description: string }> = {
@@ -69,9 +73,11 @@ function log(event: string, data: Record<string, unknown> = {}) {
 export function loadConfig(path = CONFIG_PATH): Config {
   const c = JSON.parse(readFileSync(path, "utf8"));
   return {
-    label: "factory", maxParallel: 1, model: "", workflow: "starter-kit", pollSeconds: 60,
+    label: "factory", model: "", workflow: "starter-kit", pollSeconds: 60,
     jobTimeoutMinutes: 90, image: "software-factory-job:latest", dataDir: "/var/lib/software-factory",
     containerMemory: "3g", maxReworks: 2, ...c,
+    // Eine gemeinsame ChatGPT-Sitzung darf nur von einem Job zugleich aktualisiert werden.
+    maxParallel: Math.min(c.maxParallel ?? 1, 1),
   };
 }
 
@@ -345,6 +351,8 @@ async function imageFor(cfg: Config, repo: string): Promise<string> {
 }
 
 async function launch(cfg: Config, repo: string, issue: Issue, phase: Phase, mode: Mode, prUrl?: string, extra?: string) {
+  const isPrivate = (await gh(["repo", "view", repo, "--json", "isPrivate", "--jq", ".isPrivate"])).trim();
+  if (isPrivate !== "true") throw new Error(`ChatGPT-Login ist nur für private Ziel-Repos vorgesehen: ${repo}`);
   const name = containerName(repo, issue.number);
   const dir = jobDir(cfg, repo, issue.number);
   mkdirSync(dir, { recursive: true });
@@ -373,7 +381,7 @@ async function launch(cfg: Config, repo: string, issue: Issue, phase: Phase, mod
     ...agentLimits(cfg),
     "-e", `REPO=${repo}`, "-e", `ISSUE=${issue.number}`, "-e", `BRANCH=factory/${issue.number}`,
     "-e", `MODEL=${cfg.model}`, "-e", `WORKFLOW=${cfg.workflow}`, "-e", `PHASE=${phase}`,
-    "-e", "GH_TOKEN", "-e", "CODEX_API_KEY",
+    "-e", "GH_TOKEN", ...CODEX_AUTH_ARGS,
     "-v", `${dir}:/work`, ...scenarioMount,
     await imageFor(cfg, repo),
   ]);
@@ -713,8 +721,15 @@ async function tick(cfg: Config) {
 async function main() {
   const once = process.argv.includes("--once");
   let cfg = loadConfig();
-  if (!process.env.CODEX_API_KEY || !process.env.GH_TOKEN) {
-    log("config:error", { error: "CODEX_API_KEY und GH_TOKEN müssen gesetzt sein" });
+  if (!process.env.GH_TOKEN) {
+    log("config:error", { error: "GH_TOKEN muss gesetzt sein" });
+    process.exit(1);
+  }
+  try {
+    await docker(["run", "--rm", "--cap-drop=ALL", "--security-opt=no-new-privileges",
+      ...CODEX_AUTH_ARGS, "--entrypoint", "factory-codex", cfg.image, "login", "status"]);
+  } catch (e) {
+    log("config:error", { error: String(e) });
     process.exit(1);
   }
   CONTAINER_UID = Number((await docker(["run", "--rm", "--entrypoint", "id", cfg.image, "-u"])).trim());

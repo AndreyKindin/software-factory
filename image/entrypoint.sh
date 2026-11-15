@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Startet einen Factory-Job: Repo holen, Branch auschecken, Codex mit Playbook laufen lassen.
-# Erwartet: REPO, ISSUE, BRANCH, MODEL, WORKFLOW, GH_TOKEN, CODEX_API_KEY
+# Erwartet: REPO, ISSUE, BRANCH, MODEL, WORKFLOW, GH_TOKEN, CODEX_HOME
 # und /work/prompt.md (vom Runner geschrieben).
 set -euo pipefail
 
@@ -8,8 +8,6 @@ log() { echo "[factory] $*"; }
 
 : "${REPO:?}" "${ISSUE:?}" "${BRANCH:?}"
 MODEL="${MODEL:-}"
-codex_api_key=${CODEX_API_KEY:?}
-unset CODEX_API_KEY
 export PHASE="${PHASE:-build}"   # check = prüfen, build = entwickeln, accept = unabhängige Abnahme
 WORKFLOW="${WORKFLOW:-starter-kit}"
 
@@ -57,10 +55,9 @@ args=()
 if [ -n "$MODEL" ]; then args+=(--model "$MODEL"); fi
 playbook=$(jq -Rs . /factory/playbook.md)
 set +e
-CODEX_API_KEY="$codex_api_key" codex -a never exec \
+factory-codex -a never exec \
   --sandbox danger-full-access --ephemeral --json \
   -c 'features.hooks=false' \
-  -c 'shell_environment_policy.filters.CODEX_API_KEY="exclude"' \
   -c "developer_instructions=$playbook" \
   --output-last-message /work/codex-result.txt \
   "${args[@]}" - < /work/prompt.md > /work/codex.jsonl 2> /work/codex.err

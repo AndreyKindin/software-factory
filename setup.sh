@@ -49,6 +49,8 @@ install -d /var/lib/software-factory/jobs
 say "Job-Image bauen (dauert beim ersten Mal ein paar Minuten)"
 docker build -q -t software-factory-job:latest -f image/Dockerfile . >/dev/null
 echo "  ✓ software-factory-job:latest"
+CODEX_IDS=$(docker run --rm --entrypoint sh software-factory-job:latest -c 'echo "$(id -u):$(id -g)"')
+install -d -m 700 -o "${CODEX_IDS%:*}" -g "${CODEX_IDS#*:}" "$CONF_DIR/codex-auth"
 
 say "Befehl factory-stats einrichten"
 printf '#!/bin/sh\nexec /root/.bun/bin/bun %s/scripts/factory-stats.ts "$@"\n' "$FACTORY_DIR" > /usr/local/bin/factory-stats
@@ -61,7 +63,7 @@ systemctl enable software-factory >/dev/null 2>&1
 
 # Was fehlt noch?
 MISSING=()
-grep -qE '^CODEX_API_KEY=.' "$CONF_DIR/secrets.env" || MISSING+=("Codex: CODEX_API_KEY in $CONF_DIR/secrets.env")
+bash scripts/codex-auth.sh status >/dev/null 2>&1 || MISSING+=("Codex-Login: sudo bash scripts/codex-auth.sh login")
 grep -qE '^GH_TOKEN=.' "$CONF_DIR/secrets.env" || MISSING+=("GitHub: GH_TOKEN in $CONF_DIR/secrets.env")
 jq -e '.repos | map(select(. != "DEIN-GITHUB-NAME/dein-repo")) | length > 0' "$CONF_DIR/config.json" >/dev/null || MISSING+=("Repo anbinden: ./scripts/add-repo.sh besitzer/repo")
 

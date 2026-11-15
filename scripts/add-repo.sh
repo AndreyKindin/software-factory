@@ -7,7 +7,9 @@ set -euo pipefail
 REPO="${1:?Aufruf: ./scripts/add-repo.sh besitzer/repo}"
 CONF="${FACTORY_CONFIG:-/etc/software-factory/config.json}"
 
-gh repo view "$REPO" --json name >/dev/null 2>&1 || { echo "Repo $REPO nicht gefunden oder kein Zugriff (gh auth status prüfen)."; exit 1; }
+PRIVATE=$(gh repo view "$REPO" --json isPrivate --jq .isPrivate 2>/dev/null) \
+  || { echo "Repo $REPO nicht gefunden oder kein Zugriff (gh auth status prüfen)."; exit 1; }
+[ "$PRIVATE" = true ] || { echo "ChatGPT-Login ist nur für private Ziel-Repos vorgesehen."; exit 1; }
 
 label() { gh label create "$1" -R "$REPO" --color "$2" --description "$3" --force >/dev/null; echo "  ✓ $1"; }
 echo "Labels in $REPO:"
