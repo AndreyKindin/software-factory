@@ -14,7 +14,7 @@ import {
 
 const tmp = () => mkdtempSync(join(tmpdir(), "sf-test-"));
 const cfg = (extra: Partial<Config> = {}): Config => ({
-  repos: [], label: "factory", maxParallel: 1, model: "opus", workflow: "starter-kit", pollSeconds: 60,
+  repos: [], label: "factory", maxParallel: 1, model: "", workflow: "starter-kit", pollSeconds: 60,
   jobTimeoutMinutes: 90, image: "x", dataDir: tmp(), containerMemory: "3g", maxReworks: 2, ...extra,
 });
 const c = (login: string, body: string) => ({ author: { login }, body, createdAt: "2026-11-11T10:00:00Z" });
@@ -31,8 +31,8 @@ test("readJobFile liest normale Dateien", () => {
 test("readJobFile folgt keinem Symlink auf Server-Dateien", () => {
   const d = tmp();
   writeFileSync(join(d, "geheim.txt"), "TOKEN=abc");
-  symlinkSync(join(d, "geheim.txt"), join(d, "claude.err"));
-  assert.equal(readJobFile(join(d, "claude.err")), null);
+  symlinkSync(join(d, "geheim.txt"), join(d, "codex.err"));
+  assert.equal(readJobFile(join(d, "codex.err")), null);
 });
 
 test("readJobFile ignoriert Pipes und liest bei großen Dateien nur das Ende", () => {
@@ -54,11 +54,12 @@ test("writeJobFile ersetzt einen Symlink, statt in sein Ziel zu schreiben", () =
 });
 
 test("redact entfernt Zugangsdaten aus öffentlichen Texten", () => {
-  const out = redact("x sk-ant-oat01-AbC_d-ef y ghp_0123456789abcdefghijABCDEF github_pat_11AAAAAAA0123456789_abcdefghij GH_TOKEN=geheim");
+  const out = redact("x sk-ant-oat01-AbC_d-ef y ghp_0123456789abcdefghijABCDEF github_pat_11AAAAAAA0123456789_abcdefghij GH_TOKEN=geheim CODEX_API_KEY=codexgeheim");
   assert.ok(!out.includes("sk-ant-oat01"));
   assert.ok(!out.includes("ghp_0123"));
   assert.ok(!out.includes("github_pat_11"));
   assert.ok(!out.includes("geheim"));
+  assert.ok(!out.includes("codexgeheim"));
 });
 
 // ---------- Wer darf der Factory Anweisungen geben? ----------
@@ -177,34 +178,34 @@ async function finishRun(phase: "check" | "build" | "accept", files: Record<stri
   const failedComment = calls.find((x) => x.cmd[1] === "issue" && x.cmd[2] === "comment")?.stdin ?? "";
   return { metric, failedComment, dir };
 }
-const result = (extra = {}) => JSON.stringify({ type: "result", result: "fertig", num_turns: 3, ...extra }) + "\n";
+const result = "fertig\n";
 
 test("Bau ohne Prüfergebnis gilt nicht als gebaut", async () => {
-  const r = await finishRun("build", { "status.json": '{"status":"accepting","pr":"https://x/pull/1"}', "claude.jsonl": result() });
+  const r = await finishRun("build", { "status.json": '{"status":"accepting","pr":"https://x/pull/1"}', "codex-result.txt": result });
   assert.equal(r.metric.status, "failed");
   assert.ok(r.failedComment.includes("Pflicht-Checks"));
 });
 
 test("Bau mit grünen Checks auf einem älteren Commit gilt nicht als gebaut", async () => {
   const verify = JSON.stringify({ sha: "0000000", ok: true, results: [{ name: "lint", exit: 0 }] });
-  const r = await finishRun("build", { "status.json": '{"status":"accepting","pr":"https://x/pull/1"}', "verify.json": verify, "claude.jsonl": result() });
+  const r = await finishRun("build", { "status.json": '{"status":"accepting","pr":"https://x/pull/1"}', "verify.json": verify, "codex-result.txt": result });
   assert.equal(r.metric.status, "failed");
 });
 
 test("Bau mit grünen Checks auf dem gepushten Commit geht in die Abnahme", async () => {
   const verify = JSON.stringify({ sha: headSha, ok: true, results: [{ name: "lint", exit: 0 }] });
-  const r = await finishRun("build", { "status.json": '{"status":"accepting","pr":"https://x/pull/1"}', "verify.json": verify, "claude.jsonl": result() });
+  const r = await finishRun("build", { "status.json": '{"status":"accepting","pr":"https://x/pull/1"}', "verify.json": verify, "codex-result.txt": result });
   assert.equal(r.metric.status, "accepting");
   assert.equal(r.failedComment, "");
 });
 
 test("Abnahme mit gemeldetem Erfolg, aber CLI-Fehler zählt als Fehlschlag", async () => {
-  const r = await finishRun("accept", { "status.json": '{"status":"review"}', "claude.jsonl": result({ is_error: true }) }, 1);
+  const r = await finishRun("accept", { "status.json": '{"status":"review"}', "codex-result.txt": result }, 1);
   assert.equal(r.metric.status, "failed");
 });
 
 test("Nicht bestandene letzte Abnahme wird nicht als bestanden gezählt", async () => {
-  const r = await finishRun("accept", { "status.json": '{"status":"review","unresolved":true}', "claude.jsonl": result() });
+  const r = await finishRun("accept", { "status.json": '{"status":"review","unresolved":true}', "codex-result.txt": result });
   assert.equal(r.metric.status, "unresolved");
 });
 
@@ -217,11 +218,11 @@ test("Zeitüberschreitung wird als Fehlschlag mit Grund erfasst", async () => {
 test("Fehlerkommentar enthält keine Server-Dateien und keine Tokens", async () => {
   const config = cfg();
   const secret = join(config.dataDir, "secrets.env");
-  writeFileSync(secret, "CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-GEHEIM");
+  writeFileSync(secret, "CODEX_API_KEY=sk-proj-1234567890-GEHEIM");
   const dir = join(config.dataDir, "jobs", "a__b__7");
   mkdirSync(dir, { recursive: true });
-  symlinkSync(secret, join(dir, "claude.err"));
-  writeFileSync(join(dir, "claude.jsonl"), result({ result: "Token war sk-ant-oat01-AUCHGEHEIM" }));
+  symlinkSync(secret, join(dir, "codex.err"));
+  writeFileSync(join(dir, "codex-result.txt"), "Token war sk-proj-1234567890-AUCHGEHEIM");
   calls.length = 0;
   await finish(config, { name: "x", repo: "a/b", issue: 7, phase: "build", mode: "new", running: false,
     startedAt: "2026-11-11T10:00:00Z", finishedAt: "2026-11-11T10:05:00Z", exitCode: 1 });

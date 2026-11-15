@@ -45,16 +45,6 @@ install -d -m 700 "$CONF_DIR"
 [ -f "$CONF_DIR/config.json" ] || { cp factory.config.example.json "$CONF_DIR/config.json"; echo "  Vorlage angelegt: $CONF_DIR/config.json (bitte anpassen)"; }
 [ -f "$CONF_DIR/secrets.env" ] || { touch "$CONF_DIR/secrets.env"; chmod 600 "$CONF_DIR/secrets.env"; }
 install -d /var/lib/software-factory/jobs
-# Vorschau: Server-IP und zufälliges Passwort eintragen, falls noch "AUTO"
-if jq -e '.preview.host == "AUTO" or .preview.password == "AUTO"' "$CONF_DIR/config.json" >/dev/null 2>&1; then
-  IP=$(curl -fsS4 https://ifconfig.me || hostname -I | awk '{print $1}')
-  PW=$(openssl rand -base64 18 | tr -d '/+=' | cut -c1-16)
-  TMP=$(mktemp)
-  jq --arg ip "$IP" --arg pw "$PW" '.preview.host = (if .preview.host == "AUTO" then $ip else .preview.host end) | .preview.password = (if .preview.password == "AUTO" then $pw else .preview.password end)' "$CONF_DIR/config.json" > "$TMP" && mv "$TMP" "$CONF_DIR/config.json" && chmod 600 "$CONF_DIR/config.json"
-  echo "  Vorschau: http://$IP:4001… · Login factory · Passwort in $CONF_DIR/config.json"
-  echo "  Für HTTPS (empfohlen): eine Subdomain auf $IP zeigen lassen und unter preview.domain eintragen (siehe Anleitung)"
-fi
-docker pull -q caddy:2-alpine >/dev/null
 
 say "Job-Image bauen (dauert beim ersten Mal ein paar Minuten)"
 docker build -q -t software-factory-job:latest -f image/Dockerfile . >/dev/null
@@ -63,14 +53,6 @@ echo "  ✓ software-factory-job:latest"
 say "Befehl factory-stats einrichten"
 printf '#!/bin/sh\nexec /root/.bun/bin/bun %s/scripts/factory-stats.ts "$@"\n' "$FACTORY_DIR" > /usr/local/bin/factory-stats
 chmod +x /usr/local/bin/factory-stats
-cat > /usr/local/bin/factory-improve <<'EOT'
-#!/bin/sh
-# Verbesserungs-Lauf anstoßen: Der Runner startet ihn beim nächsten Durchlauf (innerhalb einer Minute).
-touch /var/lib/software-factory/improve-requested && echo "Verbesserungs-Lauf angefordert. Fortschritt: journalctl -u software-factory -f"
-EOT
-chmod +x /usr/local/bin/factory-improve
-printf '#!/bin/sh\n# Neue Version der Factory übernehmen (z. B. nach dem Merge eines Verbesserungs-PRs)\nset -e\ncd %s && git pull --ff-only && docker build -q -t software-factory-job:latest -f image/Dockerfile . >/dev/null && systemctl restart software-factory && echo "Factory aktualisiert: $(git log -1 --format=%%s)"\n' "$FACTORY_DIR" > /usr/local/bin/factory-rollout
-chmod +x /usr/local/bin/factory-rollout
 
 say "Runner als Dienst einrichten"
 sed "s#/opt/software-factory#$FACTORY_DIR#g" deploy/software-factory.service > /etc/systemd/system/software-factory.service
@@ -79,8 +61,8 @@ systemctl enable software-factory >/dev/null 2>&1
 
 # Was fehlt noch?
 MISSING=()
-grep -qE '^(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY)=.' "$CONF_DIR/secrets.env" || MISSING+=("Claude-Login: Token in $CONF_DIR/secrets.env (siehe Anleitung)")
-gh auth status >/dev/null 2>&1 || MISSING+=("GitHub-Login: gh auth login -s project")
+grep -qE '^CODEX_API_KEY=.' "$CONF_DIR/secrets.env" || MISSING+=("Codex: CODEX_API_KEY in $CONF_DIR/secrets.env")
+grep -qE '^GH_TOKEN=.' "$CONF_DIR/secrets.env" || MISSING+=("GitHub: GH_TOKEN in $CONF_DIR/secrets.env")
 jq -e '.repos | map(select(. != "DEIN-GITHUB-NAME/dein-repo")) | length > 0' "$CONF_DIR/config.json" >/dev/null || MISSING+=("Repo anbinden: ./scripts/add-repo.sh besitzer/repo")
 
 if [ ${#MISSING[@]} -eq 0 ]; then

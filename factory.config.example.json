@@ -3,21 +3,11 @@
     "DEIN-GITHUB-NAME/dein-repo"
   ],
   "label": "factory",
-  "maxParallel": 2,
-  "model": "opus",
+  "maxParallel": 1,
+  "model": "",
   "workflow": "starter-kit",
   "pollSeconds": 60,
   "jobTimeoutMinutes": 90,
   "containerMemory": "3g",
-  "allowedUsers": [],
-  "preview": {
-    "host": "AUTO",
-    "domain": "",
-    "password": "AUTO",
-    "max": 1
-  },
-  "factoryRepo": "AUTO",
-  "improve": {
-    "everyDays": 0
-  }
+  "allowedUsers": []
 }

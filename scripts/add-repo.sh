@@ -31,15 +31,9 @@ if [ -f "$CONF" ]; then
   echo "In $CONF eingetragen."
 fi
 
-# Factory-Repo für den Verbesserungs-Lauf: deine eigene Kopie (Fork), aus der dieser Server installiert wurde
-if [ -f "$CONF" ] && jq -e '.factoryRepo == "AUTO"' "$CONF" >/dev/null 2>&1; then
-  ORIGIN=$(git -C "$(dirname "$0")/.." remote get-url origin 2>/dev/null | sed -E 's#^(git@github\.com:|https://github\.com/)##; s#\.git$##')
-  ME=$(gh api user --jq .login)
-  if [ -n "$ORIGIN" ] && [ "${ORIGIN%%/*}" = "$ME" ]; then FR="$ORIGIN"; else FR=""; fi
-  TMP=$(mktemp)
-  jq --arg r "$FR" '.factoryRepo = $r' "$CONF" > "$TMP" && mv "$TMP" "$CONF"
-  if [ -n "$FR" ]; then echo "Verbesserungs-Vorschläge landen in $FR."
-  else echo "Hinweis: Für Verbesserungs-Vorschläge brauchst du eine eigene Kopie der Factory (Fork), siehe Anleitung."; fi
+if [ "${FACTORY_NO_BOARD:-0}" = "1" ]; then
+  echo "Fertig. Die Factory übernimmt Issues mit Label 'factory' in $REPO."
+  exit 0
 fi
 
 # Board: vorhandenes verknüpfen, sonst einmalig anlegen

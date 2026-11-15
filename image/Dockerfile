@@ -20,16 +20,16 @@ ENV NODE_PATH=/usr/lib/node_modules
 COPY image/bin/ /usr/local/bin/
 COPY image/entrypoint.sh /factory/entrypoint.sh
 COPY image/preview.sh /factory/preview.sh
-COPY image/improve.sh /factory/improve.sh
 COPY playbooks/factory.md /factory/playbook.md
-COPY playbooks/improve.md /factory/improve.md
 COPY workflows/ /factory/workflows/
-RUN chmod +x /usr/local/bin/factory-* /factory/entrypoint.sh /factory/preview.sh /factory/improve.sh
+RUN chmod +x /usr/local/bin/factory-* /factory/entrypoint.sh /factory/preview.sh
 
-# Claude Code als normaler Nutzer installieren (offizieller Installer)
+# Codex CLI im Job-Image als normaler Nutzer installieren
 USER pwuser
 ENV HOME=/home/pwuser
-RUN curl -fsSL https://claude.ai/install.sh | bash
+RUN npm install --global --prefix "$HOME/.local" @openai/codex \
+ && "$HOME/.local/bin/codex" --version \
+ && npm cache clean --force
 # Python-Projekte: uv (verwaltet Python-Versionen und Pakete selbst)
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH=/home/pwuser/.local/bin:$PATH

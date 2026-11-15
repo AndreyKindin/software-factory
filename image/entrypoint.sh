@@ -1,20 +1,22 @@
 #!/usr/bin/env bash
-# Startet einen Factory-Job: Repo holen, Branch auschecken, Claude Code mit Playbook laufen lassen.
-# Erwartet: REPO, ISSUE, BRANCH, MODEL, WORKFLOW, GH_TOKEN, CLAUDE_CODE_OAUTH_TOKEN (oder ANTHROPIC_API_KEY)
+# Startet einen Factory-Job: Repo holen, Branch auschecken, Codex mit Playbook laufen lassen.
+# Erwartet: REPO, ISSUE, BRANCH, MODEL, WORKFLOW, GH_TOKEN, CODEX_API_KEY
 # und /work/prompt.md (vom Runner geschrieben).
 set -euo pipefail
 
 log() { echo "[factory] $*"; }
 
 : "${REPO:?}" "${ISSUE:?}" "${BRANCH:?}"
-MODEL="${MODEL:-opus}"
+MODEL="${MODEL:-}"
+codex_api_key=${CODEX_API_KEY:?}
+unset CODEX_API_KEY
 export PHASE="${PHASE:-build}"   # check = prüfen, build = entwickeln, accept = unabhängige Abnahme
 WORKFLOW="${WORKFLOW:-starter-kit}"
 
 # Workflow-Skills als Nutzer-Skills bereitstellen (landen nicht im Ziel-Repo)
-mkdir -p "$HOME/.claude/skills"
+mkdir -p "$HOME/.agents/skills"
 if [ -d "/factory/workflows/$WORKFLOW/skills" ]; then
-  cp -r "/factory/workflows/$WORKFLOW/skills/." "$HOME/.claude/skills/"
+  cp -r "/factory/workflows/$WORKFLOW/skills/." "$HOME/.agents/skills/"
 fi
 
 gh auth setup-git >/dev/null
@@ -50,17 +52,19 @@ if [ "$PHASE" != "check" ] && [ -f .factory/setup.json ]; then
 fi
 
 export FACTORY_DEFAULT_BRANCH="$DEFAULT_BRANCH"
-log "Starte Claude Code ($MODEL, Phase: $PHASE, Workflow: $WORKFLOW) für $REPO#$ISSUE auf $BRANCH"
+log "Starte Codex (${MODEL:-CLI-Standard}, Phase: $PHASE, Workflow: $WORKFLOW) für $REPO#$ISSUE auf $BRANCH"
+args=()
+if [ -n "$MODEL" ]; then args+=(--model "$MODEL"); fi
+playbook=$(jq -Rs . /factory/playbook.md)
 set +e
-claude -p "$(cat /work/prompt.md)" \
-  --append-system-prompt-file /factory/playbook.md \
-  --add-dir "/factory/workflows/$WORKFLOW" \
-  --model "$MODEL" \
-  --dangerously-skip-permissions \
-  --output-format stream-json --verbose \
-  > /work/claude.jsonl 2> /work/claude.err
+CODEX_API_KEY="$codex_api_key" codex -a never exec \
+  --sandbox danger-full-access --ephemeral --json \
+  -c 'features.hooks=false' \
+  -c 'shell_environment_policy.filters.CODEX_API_KEY="exclude"' \
+  -c "developer_instructions=$playbook" \
+  --output-last-message /work/codex-result.txt \
+  "${args[@]}" - < /work/prompt.md > /work/codex.jsonl 2> /work/codex.err
 CODE=$?
 set -e
-log "Claude Code beendet mit Exit-Code $CODE"
-tail -n 1 /work/claude.jsonl | jq -r '"Ergebnis: " + ((.result // "-") | tostring | .[0:500])' 2>/dev/null || true
-exit $CODE
+log "Codex beendet mit Exit-Code $CODE"
+exit "$CODE"

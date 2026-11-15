@@ -1,18 +1,18 @@
 // Software Factory – Runner
 // Läuft dauerhaft auf dem Server. Holt GitHub Issues mit dem Label "factory",
-// startet pro Issue einen Docker-Container mit Claude Code und hält Labels und Board aktuell.
+// startet pro Issue einen Docker-Container mit Codex und hält Labels und Board aktuell.
 // Er schreibt selbst nie Code. Das macht der Agent im Container.
 
 import {
-  appendFileSync, closeSync, constants, existsSync, fchownSync, fstatSync, mkdirSync, openSync, readFileSync, readSync,
-  rmSync, statSync, writeFileSync, writeSync, chownSync,
+  appendFileSync, closeSync, constants, fchownSync, fstatSync, mkdirSync, openSync, readFileSync, readSync,
+  rmSync, writeFileSync, writeSync, chownSync,
 } from "node:fs";
 import { join } from "node:path";
 
 export type Config = {
   repos: string[];
   label: string;
-  /** Wie viele Agent-Läufe gleichzeitig, über alle Phasen und Repos (Prüfung, Bau, Abnahme, Verbesserung) */
+  /** Wie viele Agent-Läufe gleichzeitig, über alle Phasen und Repos (Prüfung, Bau, Abnahme) */
   maxParallel: number;
   model: string;
   workflow: string;
@@ -26,10 +26,6 @@ export type Config = {
   /** GitHub-Nutzer, deren Kommentare die Factory als Antwort oder Änderungswunsch annimmt (zusätzlich zum eigenen Login) */
   allowedUsers?: string[];
   project?: { owner: string; number: number };
-  /** Factory-Repo, in dem der Verbesserungs-Lauf Vorschläge als Pull Request öffnet */
-  factoryRepo?: string;
-  /** Verbesserungs-Lauf automatisch alle X Tage (zusätzlich zu `factory-improve`). Standard: aus */
-  improve?: { everyDays?: number };
   /** Vorschau pro PR mit Passwortschutz (Nutzer "factory"). Mit domain über HTTPS, sonst http://<host>:<4000+slot> */
   preview?: { host: string; domain?: string; password: string; max?: number; memory?: string };
 };
@@ -73,7 +69,7 @@ function log(event: string, data: Record<string, unknown> = {}) {
 export function loadConfig(path = CONFIG_PATH): Config {
   const c = JSON.parse(readFileSync(path, "utf8"));
   return {
-    label: "factory", maxParallel: 2, model: "opus", workflow: "starter-kit", pollSeconds: 60,
+    label: "factory", maxParallel: 1, model: "", workflow: "starter-kit", pollSeconds: 60,
     jobTimeoutMinutes: 90, image: "software-factory-job:latest", dataDir: "/var/lib/software-factory",
     containerMemory: "3g", maxReworks: 2, ...c,
   };
@@ -136,9 +132,9 @@ const readJobJson = (path: string, maxBytes = 200_000): any => {
 /** Entfernt Zugangsdaten aus Texten, bevor sie öffentlich in GitHub landen. */
 export function redact(text: string): string {
   return text
-    .replace(/sk-ant-[A-Za-z0-9_-]+/g, "[Zugangsdaten entfernt]")
+    .replace(/sk-[A-Za-z0-9_-]{12,}/g, "[Zugangsdaten entfernt]")
     .replace(/\b(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/g, "[Zugangsdaten entfernt]")
-    .replace(/(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY|GH_TOKEN|GITHUB_TOKEN)=\S+/g, "$1=[entfernt]");
+    .replace(/(CODEX_API_KEY|OPENAI_API_KEY|GH_TOKEN|GITHUB_TOKEN)=\S+/g, "$1=[entfernt]");
 }
 
 // ---------- Dauerhafter Zustand pro Issue (nur für den Runner) ----------
@@ -326,7 +322,7 @@ export function buildPrompt(cfg: Config, repo: string, issue: Issue, phase: Phas
     ...(extra ? [`- ${extra}`] : []),
     ``, `## Issue: ${issue.title}`, ``, issue.body || "_(kein Text)_",
     ``, `## Verlauf`, ``, comments || "_(keine Kommentare)_",
-    ``, `Folge dem Factory-Playbook aus deinem System-Prompt. ${start}`,
+    ``, `Folge dem Factory-Playbook. ${start}`,
   ].join("\n");
 }
 
@@ -353,7 +349,7 @@ async function launch(cfg: Config, repo: string, issue: Issue, phase: Phase, mod
   const dir = jobDir(cfg, repo, issue.number);
   mkdirSync(dir, { recursive: true });
   chownSync(dir, CONTAINER_UID, CONTAINER_UID);
-  for (const f of ["status.json", "verify.json", "verify.md"]) rmSync(join(dir, f), { force: true });
+  for (const f of ["status.json", "verify.json", "verify.md", "codex-result.txt", "codex.jsonl", "codex.err"]) rmSync(join(dir, f), { force: true });
   writeJobFile(join(dir, "prompt.md"), buildPrompt(cfg, repo, issue, phase, mode, prUrl, extra));
 
   if (phase === "check" && !issue.comments.some((c) => isFactoryComment(c) && c.body.includes(`${MARK}claimed`))) {
@@ -369,19 +365,18 @@ async function launch(cfg: Config, repo: string, issue: Issue, phase: Phase, mod
   await setStage(repo, issue, status);
   await syncBoard(cfg, issue.url, status);
 
-  const ghToken = (await gh(["auth", "token"])).trim();
-  const authVar = process.env.CLAUDE_CODE_OAUTH_TOKEN ? "CLAUDE_CODE_OAUTH_TOKEN" : "ANTHROPIC_API_KEY";
   await docker(["rm", "-f", name]).catch(() => {});
   await docker([
     "run", "-d", "--name", name,
+    "--cap-drop=ALL", "--security-opt=no-new-privileges",
     "--label", "software-factory=1", "--label", `sf.repo=${repo}`, "--label", `sf.issue=${issue.number}`, "--label", `sf.phase=${phase}`, "--label", `sf.mode=${mode}`,
     ...agentLimits(cfg),
     "-e", `REPO=${repo}`, "-e", `ISSUE=${issue.number}`, "-e", `BRANCH=factory/${issue.number}`,
     "-e", `MODEL=${cfg.model}`, "-e", `WORKFLOW=${cfg.workflow}`, "-e", `PHASE=${phase}`,
-    "-e", "GH_TOKEN", "-e", authVar, // Werte kommen aus der Umgebung, nicht aus der Kommandozeile
+    "-e", "GH_TOKEN", "-e", "CODEX_API_KEY",
     "-v", `${dir}:/work`, ...scenarioMount,
     await imageFor(cfg, repo),
-  ], { GH_TOKEN: ghToken });
+  ]);
   log("job:started", { repo, issue: issue.number, phase, mode, container: name });
 }
 
@@ -409,9 +404,7 @@ async function checkBuild(repo: string, issue: number, dir: string, prUrl?: stri
 async function finish(cfg: Config, c: Container, reason?: string) {
   const dir = jobDir(cfg, c.repo, c.issue);
   const status: { status?: string; step?: string; pr?: string; unresolved?: boolean } = readJobJson(join(dir, "status.json")) ?? {};
-  let result: any = {};
-  const tail = readJobFile(join(dir, "claude.jsonl"), 500_000) ?? "";
-  try { result = JSON.parse(tail.trim().split("\n").pop() ?? ""); } catch {}
+  const result = readJobFile(join(dir, "codex-result.txt"), 4000);
 
   const endStates: Record<Phase, string[]> = {
     check: ["approved", "question", "rejected", "failed"],
@@ -419,27 +412,25 @@ async function finish(cfg: Config, c: Container, reason?: string) {
     accept: ["review", "working", "question", "failed"], // working = Rückgabe an die Entwicklung
   };
   let problem = reason ?? null;
+  if (!problem && c.exitCode !== 0) problem = `Codex wurde mit einem Fehler beendet (Exit-Code ${c.exitCode}).`;
   if (!problem && !(status.status && endStates[c.phase].includes(status.status))) problem = "Der Lauf hat kein Ergebnis gemeldet.";
-  if (!problem && (c.exitCode !== 0 || result.is_error)) problem = `Claude Code wurde mit einem Fehler beendet (Exit-Code ${c.exitCode}).`;
   if (!problem && c.phase === "build" && status.status === "accepting") problem = await checkBuild(c.repo, c.issue, dir, status.pr);
   const ended = !problem;
   const metricStatus = ended ? (status.status === "review" && status.unresolved ? "unresolved" : status.status) : "failed";
 
   log("job:finished", {
     repo: c.repo, issue: c.issue, phase: c.phase, exitCode: c.exitCode, status: metricStatus, problem,
-    minutes: result.duration_ms ? Math.round(result.duration_ms / 60000) : null,
-    turns: result.num_turns ?? null, costUsd: result.total_cost_usd ?? null,
   });
-  const errTail = redact(readJobFile(join(dir, "claude.err"), 1500) ?? "");
-  // Kurze Zusammenfassung des Laufs dauerhaft festhalten: Grundlage für den Verbesserungs-Lauf
+  const errTail = redact(readJobFile(join(dir, "codex.err"), 1500) ?? "");
+  // Kurze Zusammenfassung des Laufs für die Diagnose festhalten.
   try {
     const runsDir = join(cfg.dataDir, "runs");
     mkdirSync(runsDir, { recursive: true });
     writeFileSync(join(runsDir, `${new Date().toISOString().replace(/[:.]/g, "-")}__${c.repo.replace("/", "__")}__${c.issue}__${c.phase}.json`), JSON.stringify({
       repo: c.repo, issue: c.issue, phase: c.phase, mode: c.mode, exitCode: c.exitCode,
       status: metricStatus, problem, reported: status,
-      result: typeof result.result === "string" ? redact(result.result.slice(0, 4000)) : null,
-      turns: result.num_turns ?? null, costUsd: result.total_cost_usd ?? null, errTail,
+      result: result === null ? null : redact(result),
+      errTail,
     }, null, 2));
   } catch (e) { log("runs:error", { error: String(e) }); }
   // Dauerhaft festhalten, auch nach dem Aufräumen: Grundlage für factory-stats
@@ -447,21 +438,18 @@ async function finish(cfg: Config, c: Container, reason?: string) {
   appendFileSync(join(cfg.dataDir, "metrics.jsonl"), JSON.stringify({
     t: new Date().toISOString(), repo: c.repo, issue: c.issue, phase: c.phase, mode: c.mode,
     status: metricStatus, exitCode: c.exitCode, seconds: Number.isFinite(seconds) ? seconds : null,
-    turns: result.num_turns ?? null, costUsd: result.total_cost_usd ?? null, model: cfg.model,
+    turns: null, costUsd: null, model: cfg.model || null,
   }) + "\n");
 
   if (ended) {
     setState(cfg, c.repo, c.issue, {});
   } else {
-    let detail = typeof result.result === "string" ? result.result.slice(-1500) : "";
-    if (!detail) detail = errTail.slice(-800);
-    detail = redact(detail).replace(/```/g, "'''").trim();
     const issue = JSON.parse(await gh(["issue", "view", String(c.issue), "-R", c.repo, "--json", "number,title,body,url,labels,comments"]));
     await setStage(c.repo, issue, "failed");
     await syncBoard(cfg, issue.url, "failed");
     await comment(c.repo, c.issue, `failed:${c.phase}`,
       `### ⚠️ Der Lauf wurde ohne gültiges Ergebnis beendet\n\n**Grund:** ${problem}\n\n` +
-      (detail ? "Letzte Ausgabe:\n```\n" + detail + "\n```\n\n" : "") +
+      `_Details stehen in den lokalen Job-Logs auf dem Server._\n\n` +
       `_Schreib einen Kommentar mit einem Hinweis, dann versucht die Factory es erneut._`);
   }
   await docker(["rm", "-f", c.name]).catch(() => {});
@@ -586,56 +574,6 @@ async function syncPreviews(cfg: Config, repo: string, issues: Issue[]) {
     }
   }
   if (changed) await writeCaddy(cfg, await listPreviews());
-}
-
-// ---------- Verbesserungs-Lauf ----------
-// Wertet alle bisherigen Läufe aus und schlägt Änderungen an Playbook/Skills als PR im Factory-Repo vor.
-// Auslöser: `factory-improve` (legt eine Anforderungs-Datei an) oder automatisch alle improve.everyDays Tage.
-// Belegt einen Agent-Platz wie jeder andere Lauf.
-
-async function improveRunning(cfg: Config): Promise<boolean> {
-  const lines = (await docker(["ps", "-a", "--filter", "label=sf.improve=1", "--format", "{{.Names}}|{{.State}}|{{.RunningFor}}"])).trim().split("\n").filter(Boolean);
-  let running = false;
-  for (const line of lines) {
-    const [name, state] = line.split("|");
-    if (state === "running") {
-      const started = JSON.parse(await docker(["inspect", name]))[0].State.StartedAt;
-      if ((Date.now() - Date.parse(started)) / 60000 <= cfg.jobTimeoutMinutes) { running = true; continue; }
-      log("improve:timeout", { container: name });
-      await docker(["kill", name]).catch(() => {});
-    }
-    const out = await docker(["logs", "--tail", "5", name]).catch(() => "");
-    log("improve:finished", { container: name, tail: redact(out.trim().slice(-600)) });
-    await docker(["rm", "-f", name]).catch(() => {});
-  }
-  return running;
-}
-
-async function maybeImprove(cfg: Config, freeSlots: number) {
-  if (freeSlots <= 0) return;
-  const requested = join(cfg.dataDir, "improve-requested");
-  const lastRun = join(cfg.dataDir, "improve-last");
-  const days = cfg.improve?.everyDays;
-  const due = !!days && (!existsSync(lastRun) || Date.now() - statSync(lastRun).mtimeMs > days * 86400000);
-  if (!existsSync(requested) && !due) return;
-  rmSync(requested, { force: true });
-  if (!cfg.factoryRepo) { log("improve:error", { error: "factoryRepo fehlt in der Config" }); return; }
-  writeFileSync(lastRun, new Date().toISOString());
-
-  const work = join(cfg.dataDir, "improve-work");
-  const runs = join(cfg.dataDir, "runs");
-  const metrics = join(cfg.dataDir, "metrics.jsonl");
-  mkdirSync(work, { recursive: true }); mkdirSync(runs, { recursive: true });
-  if (!existsSync(metrics)) writeFileSync(metrics, "");
-  chownSync(work, CONTAINER_UID, CONTAINER_UID);
-  const ghToken = (await gh(["auth", "token"])).trim();
-  const authVar = process.env.CLAUDE_CODE_OAUTH_TOKEN ? "CLAUDE_CODE_OAUTH_TOKEN" : "ANTHROPIC_API_KEY";
-  await docker(["run", "-d", "--name", "sf-improve", "--label", "sf.improve=1",
-    ...agentLimits(cfg),
-    "-e", `REPO=${cfg.factoryRepo}`, "-e", `MODEL=${cfg.model}`, "-e", "GH_TOKEN", "-e", authVar,
-    "-v", `${work}:/work`, "-v", `${runs}:/data/runs:ro`, "-v", `${metrics}:/data/metrics.jsonl:ro`,
-    "--entrypoint", "/factory/improve.sh", cfg.image], { GH_TOKEN: ghToken });
-  log("improve:started", { repo: cfg.factoryRepo });
 }
 
 // ---------- Hauptschleife ----------
@@ -763,27 +701,21 @@ async function tick(cfg: Config) {
     }
   }
   containers = (await listContainers()).filter((c) => c.running);
-  const improving = await improveRunning(cfg);
-  const slots = { free: cfg.maxParallel - containers.length - (improving ? 1 : 0) };
+  const slots = { free: cfg.maxParallel - containers.length };
 
   // Ein fehlerhaftes Repo darf die anderen nicht blockieren
   for (const repo of cfg.repos) {
     try { await tickRepo(cfg, repo, containers, slots); }
     catch (e) { log("repo:error", { repo, error: String(e) }); }
   }
-
-  await maybeImprove(cfg, slots.free).catch((e) => log("improve:error", { error: String(e) }));
 }
 
 async function main() {
   const once = process.argv.includes("--once");
   let cfg = loadConfig();
-  if (!process.env.CLAUDE_CODE_OAUTH_TOKEN && !process.env.ANTHROPIC_API_KEY) {
-    log("config:error", { error: "Weder CLAUDE_CODE_OAUTH_TOKEN noch ANTHROPIC_API_KEY gesetzt" });
+  if (!process.env.CODEX_API_KEY || !process.env.GH_TOKEN) {
+    log("config:error", { error: "CODEX_API_KEY und GH_TOKEN müssen gesetzt sein" });
     process.exit(1);
-  }
-  if (process.env.CLAUDE_CODE_OAUTH_TOKEN && process.env.ANTHROPIC_API_KEY) {
-    log("config:warning", { warning: "Beide Login-Arten gesetzt. Es wird nur CLAUDE_CODE_OAUTH_TOKEN an die Jobs gegeben." });
   }
   CONTAINER_UID = Number((await docker(["run", "--rm", "--entrypoint", "id", cfg.image, "-u"])).trim());
   FACTORY_LOGIN = (await gh(["api", "user", "--jq", ".login"])).trim();

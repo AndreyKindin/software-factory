@@ -95,8 +95,8 @@ Zwischenstände meldest du in dieser Phase nicht. Am Ende meldest du genau einma
 
 1. Lies die Spec (`spec.md` im Feature-Ordner) und die Testszenarien unter `/scenarios/scenarios.md`. Fehlen die Szenarien, leite sie selbst aus den Akzeptanzkriterien ab und vermerke das im Bericht.
 2. Du bist auf dem Branch des Pull Requests. Führe `factory-verify` aus.
-3. Starte die App (`.factory/setup.json` → `dev`) auf einem freien Port und teste **jedes Szenario selbst im Browser** (Playwright-Skript mit Node, Chromium ist installiert). Halte wichtige Zustände mit `factory-screenshot` fest.
-4. Prüfe zusätzlich kurz auf Offensichtliches: Konsolenfehler, kaputte Darstellung auf 375px, Eingaben, die die App zum Absturz bringen.
+3. Prüfe jedes Szenario selbst. Bei einer Weboberfläche starte die App über `.factory/setup.json` → `dev` und teste mit Playwright. Bei Bibliotheken und CLI-Tools prüfe über die jeweilige Schnittstelle, etwa mit einem separaten Skript unter `/tmp`.
+4. Prüfe bei einer Weboberfläche zusätzlich Konsolenfehler, die Darstellung auf 375px und fehlerhafte Eingaben. Halte wichtige Zustände mit `factory-screenshot` fest.
 5. Schreibe den **Abnahmebericht** in eine Datei: pro Szenario ✅ / ❌ mit einem Satz Begründung, gefundene Probleme mit Schritten zum Nachstellen, Checks, Screenshots.
 6. Entscheidung:
    - **Alle Szenarien bestanden, keine schweren Probleme** → `factory-report accepted "<1–2 Sätze>" --pr <url> --body-file <bericht>`

@@ -4,11 +4,11 @@ Basiert auf dem [AI Coding Starter Kit](https://github.com/AlexPEClub/ai-coding-
 
 ## Aufgabenteilung
 
-- **Du (lokal mit Claude Code):** Spec schreiben mit `/write-spec` (Interview), prüfen, auf den Standard-Branch pushen, mit `/to-factory` an die Factory übergeben. Die Spec ist die Basis für alles und wird von dir abgenommen.
+- **Du (lokal):** Spec schreiben, prüfen und auf den Standard-Branch pushen. Dann ein Issue mit dem Label `factory` und einem Verweis `Spec: <pfad>` anlegen.
 - **Factory (auf dem Server):** Architektur, Umsetzung, QA, Pull Request.
 - **Du:** Pull Request prüfen und mergen.
 
-Die lokalen Skills liegen unter `local-skills/` im Factory-Repo. Kopiere sie in `.claude/skills/` deines Projekts.
+Die serverseitigen Workflow-Skills werden im Job-Container unter `~/.agents/skills/` bereitgestellt.
 
 ## Ablage
 
@@ -36,7 +36,7 @@ features/
   - Schritt **Tests** → Skill `qa` → `qa-report.md`
   - Ergebnis: Pull Request → **Abnahme**
 - **Abnahme** (eigener Lauf, neuer Agent, entwickelt nichts)
-  - Kennt nur Spec, Testszenarien und den PR-Branch. Startet die App und testet jedes Szenario im Browser.
+  - Prüft die Testszenarien auf dem PR-Branch über die Schnittstelle des Projekts. Bei Webanwendungen nutzt sie den Browser.
   - Bestanden → **Review**. Nicht bestanden → Befunde zurück in die Entwicklung (max. 2 Runden, danach Review mit „Bitte genau prüfen")
 
 ## Status auf dem Board
