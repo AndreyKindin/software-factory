@@ -21,6 +21,7 @@ COPY image/bin/ /usr/local/bin/
 COPY image/entrypoint.sh /factory/entrypoint.sh
 COPY image/preview.sh /factory/preview.sh
 COPY playbooks/factory.md /factory/playbook.md
+COPY local-skills/write-spec/template.md /factory/spec-template.md
 COPY workflows/ /factory/workflows/
 RUN chmod +x /usr/local/bin/factory-* /factory/entrypoint.sh /factory/preview.sh
 

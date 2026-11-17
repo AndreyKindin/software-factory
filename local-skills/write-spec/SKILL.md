@@ -49,10 +49,7 @@ Cover these topics through natural conversation (not as a checklist):
 
 Use [template.md](template.md). Save to `features/PROJ-X-feature-name/spec.md` (kebab-case folder).
 
-Fill in while the interview is fresh:
-- **Out of Scope** — everything that came up but was consciously excluded. The factory needs this to know what NOT to build.
-- **Product Decisions** — every scoping or UX decision with its rationale
-- **Open Questions** — anything unresolved, as `- [ ]`
+Keep the sections and order of the template. Record the expected behavior and its interface under **Umfang und Schnittstelle**. Record exclusions under **Außerhalb des Umfangs**. Under **Verbindliche Entscheidungen und offene Fragen**, record the confirmed decisions with their rationale and mark unresolved questions with `- [ ]`.
 
 **Acceptance criteria** in German, numbered, Given/When/Then:
 ```

@@ -25,6 +25,14 @@ fi
 
 if [ "$PHASE" = "spec" ]; then
   cd /work/repo
+  SPEC_TEMPLATE=/factory/spec-template.md
+  for path in .agents/skills/write-spec/template.md .claude/skills/write-spec/template.md; do
+    if [ -f "$path" ]; then
+      SPEC_TEMPLATE="$PWD/$path"
+      break
+    fi
+  done
+  log "Spec-Vorlage: $SPEC_TEMPLATE"
 else
   gh auth setup-git >/dev/null
   GH_LOGIN=$(gh api user --jq .login)
@@ -63,7 +71,11 @@ fi
 log "Starte Codex (${MODEL:-CLI-Standard}, Phase: $PHASE, Workflow: $WORKFLOW) für $REPO#$ISSUE auf $BRANCH"
 args=()
 if [ -n "$MODEL" ]; then args+=(--model "$MODEL"); fi
-playbook=$(jq -Rs . /factory/playbook.md)
+playbook=$(jq -Rs --arg template "${SPEC_TEMPLATE:-}" '
+  if $template == "" then . else
+    . + "\n\nFür diesen Spec-Entwurf ist folgende Vorlage verbindlich: `" + $template + "`. Lies sie vollständig und verwende ihre Gliederung."
+  end
+' /factory/playbook.md)
 set +e
 factory-codex -a never exec \
   --sandbox danger-full-access --ephemeral --json \

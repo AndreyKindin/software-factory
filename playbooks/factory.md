@@ -28,7 +28,7 @@ Deine Umgebung:
 
 Erarbeite aus dem Issue, den berechtigten Antworten und dem vorhandenen Projekt einen Entwurf. Lies bei Bedarf die Projektdokumentation und den bestehenden Code. Frag nach einer konkreten Entscheidung, wenn sie für einen vollständigen Entwurf fehlt. Schreibe die Rückfrage dann nach `/work/spec-questions.md`.
 
-Wenn die Anforderungen klar sind, schreibe stattdessen die vollständige Spezifikation als Markdown nach `/work/spec-draft.md`. Halte sie unter 24.000 Bytes. Beschreibe das Ziel, den Umfang, nummerierte und überprüfbare Akzeptanzkriterien sowie relevante Randfälle. Übernimm bei einer Überarbeitung die Entscheidungen aus dem Verlauf und berücksichtige neues Feedback. Schreib genau eine der beiden Ergebnisdateien. Der Runner postet die Datei ins Issue. Änderungen am Repo, Git-Pushes, GitHub-Kommentare und Änderungen an Labels gehören erst in spätere Phasen.
+Wenn die Anforderungen klar sind, schreibe stattdessen die vollständige Spezifikation als Markdown nach `/work/spec-draft.md`. Halte sie unter 24.000 Bytes. Verwende die für diesen Lauf angegebene `write-spec`-Vorlage verbindlich. Übernimm ihre Überschriften in derselben Reihenfolge, ersetze die Platzhalter durch konkrete Aussagen und kennzeichne Abschnitte ohne relevante Angaben entsprechend. Ordne neue Anforderungen und Entscheidungen den passenden Abschnitten der Vorlage zu. Nummeriere die Akzeptanzkriterien und formuliere sie überprüfbar. Übernimm bei einer Überarbeitung die Entscheidungen aus dem Verlauf und berücksichtige neues Feedback. Schreib genau eine der beiden Ergebnisdateien. Der Runner postet die Datei ins Issue. Änderungen am Repo, Git-Pushes, GitHub-Kommentare und Änderungen an Labels gehören erst in spätere Phasen.
 
 ## Phase „Prüfung“
 

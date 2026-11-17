@@ -19,6 +19,8 @@ Bugs gehen auch ohne Spec: Issue mit Label `factory` anlegen und beschreiben, wa
 
 **Feature direkt im Issue entwerfen:** Lege ein Issue mit deiner Idee an und setze `factory:spec-draft`. Die Factory stellt Rückfragen oder veröffentlicht eine vollständige Spec als Kommentar. Antworte im Issue mit Änderungswünschen oder gib die aktuelle Fassung mit einem eigenen Kommentar wie `/approve-spec v1` frei. Freigaben zählen vom Factory-Login und aus `allowedUsers`. Der Runner speichert die freigegebene Fassung, ersetzt das Label durch `factory` und verwendet denselben Stand in Prüfung, Bau und Abnahme. Design und QA landen für diesen Weg unter `features/ISSUE-<nummer>/`.
 
+Der Issue-Entwurf verwendet die `write-spec`-Vorlage aus dem Standardbranch des Ziel-Repos. Er sucht zuerst unter `.agents/skills/write-spec/template.md` und dann unter `.claude/skills/write-spec/template.md`. Ohne Projektvorlage verwendet er [die Standardvorlage der Factory](local-skills/write-spec/template.md). Die gewählte Datei steht im Container-Log unter `Spec-Vorlage`.
+
 **Status auf dem Board:** Neu → In Prüfung → Rückfrage / Abgelehnt → Freigegeben → In Arbeit (Architektur · Umsetzung · Tests) → Abnahme → Review → Fertig, bei technischen Fehlern Fehlgeschlagen. Prüfung, Entwicklung und Abnahme sind getrennte Läufe in eigenen Containern: Neue Issues werden sofort geprüft, entwickelt wird, sobald ein Platz frei ist.
 
 > 🚧 Erste Version, in aktiver Entwicklung.
