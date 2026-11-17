@@ -302,11 +302,12 @@ async function initBoard(cfg: Config) {
   }
 }
 
-async function syncBoard(cfg: Config, url: string, status: string, step?: string) {
+async function syncBoard(cfg: Config, url: string, status: string, step?: string, pullRequest = false) {
   if (!board || !cfg.project) return;
-  const optionId = board.status.options[STATUS[status]?.name];
+  const prColumn = pullRequest && status !== "done" ? board.status.options["Pull Requests"] : undefined;
+  const optionId = prColumn ?? board.status.options[STATUS[status]?.name];
   if (!optionId) return;
-  const key = `${status}:${step ?? ""}`;
+  const key = `${optionId}:${step ?? ""}`;
   let entry = boardItems.get(url);
   if (entry?.key === key) return;
   try {
@@ -316,9 +317,11 @@ async function syncBoard(cfg: Config, url: string, status: string, step?: string
       boardItems.set(url, entry);
     }
     await gh(["project", "item-edit", "--id", entry.itemId, "--project-id", board.id, "--field-id", board.status.id, "--single-select-option-id", optionId]);
-    const stepId = status === "working" && step ? board.step.options[STEPS[step]] : undefined;
-    if (stepId) await gh(["project", "item-edit", "--id", entry.itemId, "--project-id", board.id, "--field-id", board.step.id, "--single-select-option-id", stepId]);
-    else await gh(["project", "item-edit", "--id", entry.itemId, "--project-id", board.id, "--field-id", board.step.id, "--clear"]);
+    if (!pullRequest) {
+      const stepId = status === "working" && step ? board.step.options[STEPS[step]] : undefined;
+      if (stepId) await gh(["project", "item-edit", "--id", entry.itemId, "--project-id", board.id, "--field-id", board.step.id, "--single-select-option-id", stepId]);
+      else await gh(["project", "item-edit", "--id", entry.itemId, "--project-id", board.id, "--field-id", board.step.id, "--clear"]);
+    }
     entry.key = key;
   } catch (e) {
     log("board:sync-error", { url, error: String(e) });
@@ -726,9 +729,11 @@ async function tickRepo(cfg: Config, repo: string, containers: Container[], slot
   const closed: Issue[] = JSON.parse(await gh(["issue", "list", "-R", repo, "--label", "factory:review", "--state", "closed",
     "--json", "number,title,body,url,labels,comments", "--limit", "20"]));
   for (const issue of [...closed, ...issues.filter((i) => stageOf(i) === "review")]) {
-    if (await findPr(repo, issue.number, "merged")) {
+    const merged = await findPr(repo, issue.number, "merged");
+    if (merged) {
       await setStage(repo, issue, "done");
       await syncBoard(cfg, issue.url, "done");
+      await syncBoard(cfg, merged.url, "done", undefined, true);
       rmSync(jobDir(cfg, repo, issue.number), { recursive: true, force: true });
       rmSync(jobDir(cfg, repo, issue.number, "spec"), { recursive: true, force: true });
       rmSync(scenarioDir(cfg, repo, issue.number), { recursive: true, force: true });
@@ -752,6 +757,16 @@ async function tickRepo(cfg: Config, repo: string, containers: Container[], slot
       }
       continue;
     }
+    // Auch während der laufenden Abnahme und ohne freien Job-Platz wird der PR angezeigt.
+    let prUrl: string | undefined;
+    if (board && cfg.project && (status === "accepting" || status === "review")) {
+      try {
+        prUrl = (await findPr(repo, issue.number, "open"))?.url;
+        if (prUrl) await syncBoard(cfg, prUrl, status, undefined, true);
+      } catch (e) {
+        log("board:pr-sync-error", { repo, issue: issue.number, error: String(e) });
+      }
+    }
     if (running) {
       // Genauen Schritt aus dem laufenden Job aufs Board bringen
       const step = readJobJson(join(jobDir(cfg, repo, issue.number), "status.json"), 10_000)?.step || undefined;
@@ -766,7 +781,6 @@ async function tickRepo(cfg: Config, repo: string, containers: Container[], slot
     // Was als Nächstes zu tun ist
     let phase: Phase | null = null;
     let mode: Mode = "new";
-    let prUrl: string | undefined;
     let lost = false;
     const marker = lastFactoryMarker(issue);
     const answered = humanCommentsSinceFactory(cfg, issue).length > 0;
@@ -779,12 +793,12 @@ async function tickRepo(cfg: Config, repo: string, containers: Container[], slot
       lost = mode === "retry";
       if (mode === "rework") prUrl = (await findPr(repo, issue.number, "open"))?.url;
     }
-    else if (current === "accepting") { phase = "accept"; prUrl = (await findPr(repo, issue.number, "open"))?.url; }
+    else if (current === "accepting") phase = "accept";
     else if (answered && current === "question") { phase = (marker?.phase as Phase) ?? "check"; mode = "answer"; }
     else if (answered && current === "rejected") { phase = "check"; mode = "answer"; }
     else if (answered && current === "failed") { phase = (marker?.phase as Phase) ?? "build"; mode = "retry"; }
     else if (answered && current === "review") {
-      prUrl = (await findPr(repo, issue.number, "open"))?.url;
+      prUrl ??= (await findPr(repo, issue.number, "open"))?.url;
       if (prUrl) { phase = "build"; mode = "change-request"; }
     }
     if (!phase) continue;
@@ -870,6 +884,6 @@ async function main() {
   }
 }
 
-export { finish, tick }; // für Tests
+export { finish, initBoard, tick }; // für Tests
 
 if ((import.meta as any).main) main();

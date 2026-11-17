@@ -146,12 +146,13 @@ test("factory-verify: grün nur, wenn alle Checks bestehen", () => {
 
 // ---------- Auswertung eines beendeten Laufs (GitHub und Docker simuliert) ----------
 
-import { finish, specDraftAction, tick } from "./main.ts";
+import { finish, initBoard, specDraftAction, tick } from "./main.ts";
 
 type Call = { cmd: string[]; stdin: string };
 const calls: Call[] = [];
 let headSha = "abc1234";
 let draftIssue: (ReturnType<typeof issue> & { state: string }) | undefined;
+let boardExample: { issue: ReturnType<typeof issue>; pr: { url: string; state: string }; dedicatedPrColumn: boolean } | undefined;
 (globalThis as any).Bun = {
   spawn(cmd: string[], opts: any) {
     const call: Call = { cmd, stdin: "" };
@@ -159,10 +160,30 @@ let draftIssue: (ReturnType<typeof issue> & { state: string }) | undefined;
     let out = "";
     if (cmd[0] === "gh" && cmd[1] === "issue" && cmd[2] === "view") out = JSON.stringify(draftIssue ?? issue([]));
     if (cmd[0] === "gh" && cmd[1] === "issue" && cmd[2] === "list") {
-      out = JSON.stringify(draftIssue && cmd.includes("factory:spec-draft") ? [draftIssue] : []);
+      if (draftIssue && cmd.includes("factory:spec-draft")) out = JSON.stringify([draftIssue]);
+      else if (boardExample && cmd.includes("factory") && cmd.includes("open")) out = JSON.stringify([boardExample.issue]);
+      else out = "[]";
     }
     if (cmd[0] === "gh" && cmd[1] === "api" && String(cmd[2]).includes("/git/ref/heads/")) out = headSha + "\n";
     if (cmd[0] === "gh" && cmd[1] === "pr" && cmd[2] === "diff") out = "src/app/page.tsx\n";
+    if (cmd[0] === "gh" && cmd[1] === "pr" && cmd[2] === "list" && boardExample) {
+      out = JSON.stringify(cmd.includes(boardExample.pr.state) ? [boardExample.pr] : []);
+    }
+    if (cmd[0] === "gh" && cmd[1] === "project") {
+      if (cmd[2] === "view") out = '{"id":"board","title":"Test-Board"}';
+      if (cmd[2] === "field-list") {
+        const names = ["Neu", "In Prüfung", "Rückfrage", "Abgelehnt", "Freigegeben", "In Arbeit", "Abnahme",
+          "Review", "Fertig", "Fehlgeschlagen"];
+        if (boardExample?.dedicatedPrColumn) names.push("Pull Requests");
+        out = JSON.stringify({ fields: [
+          { name: "Status", id: "status", options: names.map((name) => ({ name, id: name })) },
+          { name: "Schritt", id: "step", options: [] },
+        ] });
+      }
+      if (cmd[2] === "item-add") {
+        out = JSON.stringify({ id: cmd[cmd.indexOf("--url") + 1] === boardExample?.pr.url ? "pr-card" : "issue-card" });
+      }
+    }
     return {
       stdout: new Blob([out]).stream(), stderr: new Blob([""]).stream(), kill() {},
       exited: (async () => { if (opts.stdin instanceof Blob) call.stdin = await opts.stdin.text(); return 0; })(),
@@ -210,6 +231,44 @@ test("Spec-Entwurf: Nur eine berechtigte Freigabe der veröffentlichten Version 
     }
   } finally {
     draftIssue = undefined;
+  }
+});
+
+test("Factory-PR wird ohne freien Job-Platz als eigene Karte angezeigt und nach dem Merge verschoben", async () => {
+  for (const dedicatedPrColumn of [false, true]) {
+    const repo = dedicatedPrColumn ? "a/dedicated" : "a/default";
+    const config = cfg({ repos: [repo], maxParallel: 0, project: { owner: "a", number: 1 } });
+    const prUrl = `https://github.com/${repo}/pull/8`;
+    boardExample = {
+      issue: { ...issue([]), url: `https://github.com/${repo}/issues/7`, labels: [{ name: "factory:accepting" }] },
+      pr: { url: prUrl, state: "open" },
+      dedicatedPrColumn,
+    };
+    const addPr = () => calls.filter(({ cmd }) => cmd[2] === "item-add" && cmd.includes(prUrl));
+    const prStatus = (status: string) => calls.some(({ cmd }) =>
+      cmd[2] === "item-edit" && cmd.includes("pr-card") && cmd.includes(status));
+    try {
+      await initBoard(config);
+      calls.length = 0;
+      await tick(config);
+      assert.equal(addPr().length, 1);
+      assert.ok(prStatus(dedicatedPrColumn ? "Pull Requests" : "Abnahme"));
+      assert.ok(calls.some(({ cmd }) => cmd[2] === "item-edit" && cmd.includes("issue-card") && cmd.includes("Abnahme")));
+
+      calls.length = 0;
+      boardExample.issue.labels = [{ name: "factory:review" }];
+      await tick(config);
+      assert.equal(addPr().length, 0);
+      assert.equal(prStatus("Review"), !dedicatedPrColumn);
+
+      calls.length = 0;
+      boardExample.pr.state = "merged";
+      await tick(config);
+      assert.equal(addPr().length, 0);
+      assert.ok(prStatus("Fertig"));
+    } finally {
+      boardExample = undefined;
+    }
   }
 });
 

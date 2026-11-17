@@ -23,6 +23,8 @@ Der Issue-Entwurf verwendet die `write-spec`-Vorlage aus dem Standardbranch des 
 
 **Status auf dem Board:** Neu → In Prüfung → Rückfrage / Abgelehnt → Freigegeben → In Arbeit (Architektur · Umsetzung · Tests) → Abnahme → Review → Fertig, bei technischen Fehlern Fehlgeschlagen. Prüfung, Entwicklung und Abnahme sind getrennte Läufe in eigenen Containern: Neue Issues werden sofort geprüft, entwickelt wird, sobald ein Platz frei ist.
 
+Factory-Pull-Requests erscheinen ab der Abnahme automatisch als eigene Karten. Hat das Board eine Statusspalte namens `Pull Requests`, landen offene Factory-PRs dort. Sonst folgen sie den Spalten Abnahme und Review. Beim Merge wechselt die PR-Karte zu Fertig.
+
 > 🚧 Erste Version, in aktiver Entwicklung.
 
 ## So funktioniert es
