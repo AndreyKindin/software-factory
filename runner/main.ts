@@ -5,8 +5,9 @@
 
 import {
   appendFileSync, closeSync, constants, fchownSync, fstatSync, mkdirSync, openSync, readFileSync, readSync,
-  rmSync, writeFileSync, writeSync, chownSync,
+  rmSync, renameSync, writeFileSync, writeSync, chownSync, existsSync,
 } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 
 export type Config = {
@@ -31,9 +32,9 @@ export type Config = {
 };
 
 type Comment = { author: { login: string } | null; body: string; createdAt: string };
-type Issue = { number: number; title: string; body: string; url: string; labels: { name: string }[]; comments: Comment[] };
+type Issue = { number: number; title: string; body: string; url: string; labels: { name: string }[]; comments: Comment[]; state?: string };
 type Container = { name: string; repo: string; issue: number; phase: Phase; mode: string; running: boolean; startedAt: string; finishedAt: string; exitCode: number };
-type Phase = "check" | "build" | "accept";
+type Phase = "spec" | "check" | "build" | "accept";
 type Mode = "new" | "answer" | "change-request" | "retry" | "rework";
 
 const CONFIG_PATH = process.env.FACTORY_CONFIG ?? "/etc/software-factory/config.json";
@@ -42,6 +43,9 @@ const CODEX_AUTH_ARGS = [
   "-e", "CODEX_HOME=/codex-auth",
 ];
 const MARK = "<!-- software-factory:";
+const SPEC_DRAFT = "factory:spec-draft";
+const SPEC_LIMIT = 24_000;
+const APPROVED_SPEC = "/factory/approved-spec.md";
 // Status eines Issues (Label factory:<status>) und die Spalte dazu auf dem Board
 const STATUS: Record<string, { name: string; color: string; description: string }> = {
   new: { name: "Neu", color: "GRAY", description: "Angelegt, die Factory hat es noch nicht geprüft" },
@@ -147,6 +151,7 @@ export function redact(text: string): string {
 
 type IssueState = { lostRetries?: number };
 const stateFile = (cfg: Config, repo: string, n: number) => join(cfg.dataDir, "state", `${repo.replace("/", "__")}__${n}.json`);
+const approvedSpecFile = (cfg: Config, repo: string, n: number) => `${stateFile(cfg, repo, n)}.spec.md`;
 function getState(cfg: Config, repo: string, n: number): IssueState {
   try { return JSON.parse(readFileSync(stateFile(cfg, repo, n), "utf8")); } catch { return {}; }
 }
@@ -203,6 +208,50 @@ export function humanCommentsSinceFactory(cfg: Config, issue: Issue): Comment[] 
   let last = -1;
   issue.comments.forEach((c, i) => { if (isFactoryComment(c)) last = i; });
   return issue.comments.slice(last + 1).filter((c) => !c.body.includes(MARK) && isTrusted(cfg, loginOf(c)));
+}
+
+const specHash = (body: string) => createHash("sha256").update(body).digest("hex");
+const specHeading = (version: number) =>
+  `### Spec v${version}\n\nSchreib Änderungswünsche hier ins Issue oder bestätige diese Fassung mit \`/approve-spec v${version}\`.\n\n`;
+
+export function specDraftAction(cfg: Config, issue: Issue):
+  { kind: "draft" } | { kind: "approve"; version: number; markdown: string } | { kind: "wait" } {
+  const lastReport = issue.comments.findLastIndex(isFactoryComment);
+  if (lastReport === -1) return { kind: "draft" };
+
+  // Nur die jüngste Meldung kann freigegeben werden. Eine neuere Rückfrage, ein Fehler oder ein
+  // weiterer Entwurf macht eine Freigabe für eine ältere Fassung unwirksam.
+  const report = issue.comments[lastReport].body;
+  const draft = report.match(/^<!-- software-factory:spec_draft:(\d+):([a-f0-9]{64}):[a-f0-9]{64} -->\n/);
+  const replies = humanCommentsSinceFactory(cfg, issue);
+  const latest = replies.at(-1)?.body.trim() ?? "";
+  const approval = latest.match(/^\/approve-spec v([1-9][0-9]*)$/);
+  if (approval && draft && approval[1] === draft[1]) {
+    const heading = specHeading(Number(draft[1]));
+    const content = report.slice(draft[0].length);
+    const markdown = content.slice(heading.length).trim();
+    if (content.startsWith(heading) && specHash(markdown) === draft[2]) {
+      return { kind: "approve", version: Number(draft[1]), markdown };
+    }
+  }
+  return replies.some((reply) => !/^\/approve-spec\b/i.test(reply.body.trim())) && !approval
+    ? { kind: "draft" } : { kind: "wait" };
+}
+
+async function promoteSpec(cfg: Config, repo: string, issue: Issue, action: ReturnType<typeof specDraftAction>) {
+  const path = approvedSpecFile(cfg, repo, issue.number);
+  if (!existsSync(path)) {
+    if (action.kind !== "approve") return false;
+    mkdirSync(join(cfg.dataDir, "state"), { recursive: true });
+    writeFileSync(`${path}.tmp`, `${action.markdown}\n`, { mode: 0o644 });
+    renameSync(`${path}.tmp`, path);
+  }
+  if (!issue.comments.some((c) => isFactoryComment(c) && c.body.startsWith(`${MARK}spec_approved -->`))) {
+    await comment(repo, issue.number, "spec_approved", "### Spec freigegeben\n\nDie bestätigte Fassung ist gespeichert. Die technische Prüfung folgt, sobald ein Job-Platz frei ist.");
+  }
+  await gh(["issue", "edit", String(issue.number), "-R", repo, "--add-label", cfg.label, "--remove-label", SPEC_DRAFT]);
+  log("spec:approved", { repo, issue: issue.number });
+  return true;
 }
 
 async function findPr(repo: string, n: number, state: "open" | "merged" | "all") {
@@ -279,7 +328,8 @@ async function syncBoard(cfg: Config, url: string, status: string, step?: string
 // ---------- Jobs ----------
 
 const containerName = (repo: string, n: number) => `sf-${repo.replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase()}-${n}`;
-const jobDir = (cfg: Config, repo: string, n: number) => join(cfg.dataDir, "jobs", `${repo.replace("/", "__")}__${n}`);
+const jobDir = (cfg: Config, repo: string, n: number, phase?: Phase) =>
+  join(cfg.dataDir, phase === "spec" ? "drafts" : "jobs", `${repo.replace("/", "__")}__${n}`);
 const scenarioDir = (cfg: Config, repo: string, n: number) => join(cfg.dataDir, "scenarios", `${repo.replace("/", "__")}__${n}`);
 const agentLimits = (cfg: Config) => ["--memory", cfg.containerMemory, "--memory-swap", cfg.containerMemory, "--pids-limit", "4096", "--shm-size", "1g"];
 
@@ -299,7 +349,7 @@ async function listContainers(): Promise<Container[]> {
   return result;
 }
 
-export function buildPrompt(cfg: Config, repo: string, issue: Issue, phase: Phase, mode: Mode, prUrl?: string, extra?: string): string {
+export function buildPrompt(cfg: Config, repo: string, issue: Issue, phase: Phase, mode: Mode, prUrl?: string, extra?: string, hasApprovedSpec = false): string {
   const modeText: Record<Mode, string> = {
     new: "Neuer Lauf",
     answer: "Fortsetzung nach einer Antwort des Menschen (siehe letzte Kommentare)",
@@ -314,21 +364,24 @@ export function buildPrompt(cfg: Config, repo: string, issue: Issue, phase: Phas
     if (!isTrusted(cfg, who)) return `### ${who} · ${c.createdAt}\n_(Kommentar ausgeblendet: ${who} ist für die Factory nicht berechtigt. Nicht beachten.)_`;
     return `### ${who} · ${c.createdAt}\n${c.body.replace(/<!-- software-factory:[\w:]+ -->\n?/g, "")}`;
   }).join("\n\n");
-  const start = phase === "check"
-    ? `Phase **Prüfung**: Prüfe nur, entwickle nichts. Beginne mit \`factory-report checking "..."\` und ende mit approved (vorher Testszenarien nach /scenarios/scenarios.md), question oder rejected.`
-    : phase === "build"
-      ? `Phase **Bau**: Die Prüfung ist bestanden (siehe Verlauf). Beginne mit \`factory-report architecture "..."\` (bei Änderungswunsch oder Rückgabe aus der Abnahme direkt mit implementing). Ende mit built.`
-      : `Phase **Abnahme**: Du bist der unabhängige Prüfer für den PR ${prUrl ?? ""}. Ende mit accepted, rework oder (nur in der letzten Runde) unresolved.`;
+  const phaseName: Record<Phase, string> = { spec: "Spec-Entwurf", check: "Prüfung", build: "Bau", accept: "Abnahme" };
+  const start: Record<Phase, string> = {
+    spec: "Erstelle eine Spec nach der Phase „Spec-Entwurf“ im Playbook. Berücksichtige die bisherigen Antworten und Änderungswünsche.",
+    check: `Prüfe nur, entwickle nichts. Beginne mit \`factory-report checking "..."\` und ende mit approved (vorher Testszenarien nach /scenarios/scenarios.md), question oder rejected.`,
+    build: `Die Prüfung ist bestanden (siehe Verlauf). Beginne mit \`factory-report architecture "..."\` (bei Änderungswunsch oder Rückgabe aus der Abnahme direkt mit implementing). Ende mit built.`,
+    accept: `Du bist der unabhängige Prüfer für den PR ${prUrl ?? ""}. Ende mit accepted, rework oder (nur in der letzten Runde) unresolved.`,
+  };
   return [
     `# Auftrag`,
     `- Repo: ${repo}`, `- Issue: #${issue.number} (${issue.url})`, `- Branch: factory/${issue.number}`,
     `- Workflow: ${cfg.workflow} (Beschreibung: /factory/workflows/${cfg.workflow}/workflow.md)`,
-    `- Phase: ${phase === "check" ? "Prüfung" : phase === "build" ? "Bau" : "Abnahme"}`,
+    `- Phase: ${phaseName[phase]}`,
     `- Modus: ${modeText[mode]}`,
+    ...(hasApprovedSpec ? [`- Verbindliche Spec: ${APPROVED_SPEC} (im Issue freigegeben). Feature-Ordner für Design und QA: features/ISSUE-${issue.number}/. Ältere Entwürfe im Verlauf sind historisch.`] : []),
     ...(extra ? [`- ${extra}`] : []),
     ``, `## Issue: ${issue.title}`, ``, issue.body || "_(kein Text)_",
     ``, `## Verlauf`, ``, comments || "_(keine Kommentare)_",
-    ``, `Folge dem Factory-Playbook. ${start}`,
+    ``, `Folge dem Factory-Playbook. ${start[phase]}`,
   ].join("\n");
 }
 
@@ -354,25 +407,42 @@ async function launch(cfg: Config, repo: string, issue: Issue, phase: Phase, mod
   const isPrivate = (await gh(["repo", "view", repo, "--json", "isPrivate", "--jq", ".isPrivate"])).trim();
   if (isPrivate !== "true") throw new Error(`ChatGPT-Login ist nur für private Ziel-Repos vorgesehen: ${repo}`);
   const name = containerName(repo, issue.number);
-  const dir = jobDir(cfg, repo, issue.number);
+  const dir = jobDir(cfg, repo, issue.number, phase);
+  const specFile = approvedSpecFile(cfg, repo, issue.number);
+  const hasApprovedSpec = phase !== "spec" && existsSync(specFile);
+  if (phase !== "spec" && !hasApprovedSpec && issue.comments.some((c) =>
+    isFactoryComment(c) && c.body.startsWith(`${MARK}spec_approved -->`))) {
+    throw new Error(`Freigegebene Spezifikation für ${repo}#${issue.number} fehlt auf dem Server.`);
+  }
   mkdirSync(dir, { recursive: true });
   chownSync(dir, CONTAINER_UID, CONTAINER_UID);
-  for (const f of ["status.json", "verify.json", "verify.md", "codex-result.txt", "codex.jsonl", "codex.err"]) rmSync(join(dir, f), { force: true });
-  writeJobFile(join(dir, "prompt.md"), buildPrompt(cfg, repo, issue, phase, mode, prUrl, extra));
+  for (const f of ["status.json", "verify.json", "verify.md", "codex-result.txt", "codex.jsonl", "codex.err", "spec-draft.md", "spec-questions.md"]) rmSync(join(dir, f), { force: true });
+  writeJobFile(join(dir, "prompt.md"), buildPrompt(cfg, repo, issue, phase, mode, prUrl, extra, hasApprovedSpec));
 
   if (phase === "check" && !issue.comments.some((c) => isFactoryComment(c) && c.body.includes(`${MARK}claimed`))) {
     await comment(repo, issue.number, "claimed",
       `🏭 Die Factory hat das Issue übernommen und prüft es jetzt. Den Fortschritt siehst du am Status (Label bzw. Board).`);
   }
-  const status = phase === "check" ? "checking" : phase === "build" ? "working" : "accepting";
+  const status = { spec: "new", check: "checking", build: "working", accept: "accepting" }[phase];
   // Testszenarien liegen außerhalb des Repos: Prüfung schreibt sie, Abnahme liest sie, der Bau sieht sie nie
   const scen = scenarioDir(cfg, repo, issue.number);
   mkdirSync(scen, { recursive: true });
   chownSync(scen, CONTAINER_UID, CONTAINER_UID);
   const scenarioMount = phase === "check" ? ["-v", `${scen}:/scenarios`] : phase === "accept" ? ["-v", `${scen}:/scenarios:ro`] : [];
-  await setStage(repo, issue, status);
+  if (phase !== "spec") await setStage(repo, issue, status);
   await syncBoard(cfg, issue.url, status);
 
+  const specMount = hasApprovedSpec ? ["-v", `${specFile}:${APPROVED_SPEC}:ro`] : [];
+  const credentials = phase === "spec" ? [] : ["-e", "GH_TOKEN"];
+  if (phase === "spec") {
+    // Den privaten Checkout vorbereiten, bevor Codex läuft. Der Entwurf selbst bekommt keinen
+    // GitHub-Schreibzugang und kann die Arbeitskopie für spätere Phasen nicht verändern.
+    rmSync(join(dir, "repo"), { recursive: true, force: true });
+    await docker(["run", "--rm", "--cap-drop=ALL", "--security-opt=no-new-privileges", ...agentLimits(cfg),
+      "-e", "GH_TOKEN", "-e", `REPO=${repo}`, "-e", `ISSUE=${issue.number}`, "-e", "PHASE=spec",
+      "-e", `BRANCH=factory/${issue.number}`, "-e", "PREPARE_SPEC=1", "-v", `${dir}:/work`, cfg.image]);
+  }
+  const draftMount = phase === "spec" ? ["-v", `${join(dir, "repo")}:/work/repo:ro`] : [];
   await docker(["rm", "-f", name]).catch(() => {});
   await docker([
     "run", "-d", "--name", name,
@@ -381,11 +451,40 @@ async function launch(cfg: Config, repo: string, issue: Issue, phase: Phase, mod
     ...agentLimits(cfg),
     "-e", `REPO=${repo}`, "-e", `ISSUE=${issue.number}`, "-e", `BRANCH=factory/${issue.number}`,
     "-e", `MODEL=${cfg.model}`, "-e", `WORKFLOW=${cfg.workflow}`, "-e", `PHASE=${phase}`,
-    "-e", "GH_TOKEN", ...CODEX_AUTH_ARGS,
-    "-v", `${dir}:/work`, ...scenarioMount,
-    await imageFor(cfg, repo),
+    ...credentials, ...CODEX_AUTH_ARGS,
+    "-v", `${dir}:/work`, ...scenarioMount, ...specMount, ...draftMount,
+    phase === "spec" ? cfg.image : await imageFor(cfg, repo),
   ]);
   log("job:started", { repo, issue: issue.number, phase, mode, container: name });
+}
+
+async function finishSpec(cfg: Config, c: Container, reason?: string) {
+  const issue: Issue = JSON.parse(await gh(["issue", "view", String(c.issue), "-R", c.repo,
+    "--json", "number,title,body,url,state,labels,comments"]));
+  const run = specHash(c.startedAt);
+  const alreadyReported = issue.comments.some((entry) => isFactoryComment(entry) &&
+    entry.body.split("\n", 1)[0].endsWith(`:${run} -->`));
+  if (issue.state === "OPEN" && issue.labels.some((l) => l.name === SPEC_DRAFT) && !alreadyReported) {
+    const dir = jobDir(cfg, c.repo, c.issue, "spec");
+    const draft = readJobFile(join(dir, "spec-draft.md"), SPEC_LIMIT + 1) ?? "";
+    const questions = readJobFile(join(dir, "spec-questions.md"), SPEC_LIMIT + 1) ?? "";
+    if (reason || c.exitCode !== 0 || Boolean(draft) === Boolean(questions) ||
+      !(draft || questions).trim() || Buffer.byteLength(draft || questions) > SPEC_LIMIT) {
+      const problem = reason ?? (c.exitCode ? `Codex endete mit Exit-Code ${c.exitCode}.` : "Codex hat kein eindeutiges Entwurfsergebnis geliefert.");
+      await comment(c.repo, c.issue, `spec_failed:${run}`,
+        `### Spec-Entwurf fehlgeschlagen\n\n${problem}\n\nSchreib einen Kommentar, damit die Factory es erneut versucht.`);
+    } else if (questions) {
+      const markdown = redact(questions.trim()).replaceAll(MARK, "&lt;!-- software-factory:");
+      await comment(c.repo, c.issue, `spec_questions:${run}`, `### Rückfragen zur Spec\n\n${markdown}`);
+    } else {
+      const versions = issue.comments.filter(isFactoryComment)
+        .map((entry) => Number(entry.body.match(/^<!-- software-factory:spec_draft:(\d+):/)?.[1] ?? 0));
+      const version = 1 + Math.max(0, ...versions);
+      const markdown = redact(draft.trim()).replaceAll(MARK, "&lt;!-- software-factory:");
+      await comment(c.repo, c.issue, `spec_draft:${version}:${specHash(markdown)}:${run}`, specHeading(version) + markdown);
+    }
+  }
+  await docker(["rm", "-f", c.name]);
 }
 
 /** Nach einem Bau-Lauf: Sind die Pflicht-Checks auf genau dem gepushten Stand grün und ist die Spec unverändert? */
@@ -410,11 +509,12 @@ async function checkBuild(repo: string, issue: number, dir: string, prUrl?: stri
 
 /** Wertet einen beendeten Container aus und räumt ihn weg. `reason` = Grund, warum der Runner ihn beendet hat. */
 async function finish(cfg: Config, c: Container, reason?: string) {
+  if (c.phase === "spec") return finishSpec(cfg, c, reason);
   const dir = jobDir(cfg, c.repo, c.issue);
   const status: { status?: string; step?: string; pr?: string; unresolved?: boolean } = readJobJson(join(dir, "status.json")) ?? {};
   const result = readJobFile(join(dir, "codex-result.txt"), 4000);
 
-  const endStates: Record<Phase, string[]> = {
+  const endStates: Record<Exclude<Phase, "spec">, string[]> = {
     check: ["approved", "question", "rejected", "failed"],
     build: ["accepting", "question", "failed"],
     accept: ["review", "working", "question", "failed"], // working = Rückgabe an die Entwicklung
@@ -599,8 +699,11 @@ async function lostJob(cfg: Config, repo: string, issue: Issue): Promise<boolean
 }
 
 async function tickRepo(cfg: Config, repo: string, containers: Container[], slots: { free: number }) {
-  const issues: Issue[] = JSON.parse(await gh(["issue", "list", "-R", repo, "--label", cfg.label, "--state", "open",
-    "--json", "number,title,body,url,labels,comments", "--limit", "100"]));
+  const listIssues = async (label: string): Promise<Issue[]> => JSON.parse(await gh(["issue", "list", "-R", repo,
+    "--label", label, "--state", "open", "--json", "number,title,body,url,labels,comments", "--limit", "100"]));
+  const [regular, drafts] = await Promise.all([listIssues(cfg.label), listIssues(SPEC_DRAFT)]);
+  const issues = [...new Map([...regular, ...drafts].map((issue) => [issue.number, issue])).values()];
+  const draftNumbers = new Set(drafts.map((issue) => issue.number));
   issues.sort((a, b) => a.number - b.number); // älteste zuerst
   const openNumbers = new Set(issues.map((i) => i.number));
 
@@ -614,6 +717,7 @@ async function tickRepo(cfg: Config, repo: string, containers: Container[], slot
 
   // Alte Labels aus der ersten Version umstellen
   for (const issue of issues) {
+    if (draftNumbers.has(issue.number)) continue;
     const legacy = LEGACY[stageOf(issue) ?? ""];
     if (legacy) await setStage(repo, issue, legacy);
   }
@@ -626,8 +730,10 @@ async function tickRepo(cfg: Config, repo: string, containers: Container[], slot
       await setStage(repo, issue, "done");
       await syncBoard(cfg, issue.url, "done");
       rmSync(jobDir(cfg, repo, issue.number), { recursive: true, force: true });
+      rmSync(jobDir(cfg, repo, issue.number, "spec"), { recursive: true, force: true });
       rmSync(scenarioDir(cfg, repo, issue.number), { recursive: true, force: true });
       rmSync(stateFile(cfg, repo, issue.number), { force: true });
+      rmSync(approvedSpecFile(cfg, repo, issue.number), { force: true });
       log("job:done", { repo, issue: issue.number });
     }
   }
@@ -635,6 +741,17 @@ async function tickRepo(cfg: Config, repo: string, containers: Container[], slot
   for (const issue of issues) {
     const status = stageOf(issue);
     const running = containers.find((c) => c.repo === repo && c.issue === issue.number && openNumbers.has(c.issue));
+    if (draftNumbers.has(issue.number) && status !== "done") {
+      await syncBoard(cfg, issue.url, "new");
+      if (running) continue;
+      const action = specDraftAction(cfg, issue);
+      if (await promoteSpec(cfg, repo, issue, action)) continue;
+      if (action.kind === "draft" && slots.free > 0) {
+        await launch(cfg, repo, issue, "spec", "new");
+        slots.free--;
+      }
+      continue;
+    }
     if (running) {
       // Genauen Schritt aus dem laufenden Job aufs Board bringen
       const step = readJobJson(join(jobDir(cfg, repo, issue.number), "status.json"), 10_000)?.step || undefined;
@@ -687,7 +804,8 @@ async function tickRepo(cfg: Config, repo: string, containers: Container[], slot
     slots.free--;
   }
 
-  await syncPreviews(cfg, repo, issues).catch((e) => log("preview:error", { repo, error: String(e) }));
+  await syncPreviews(cfg, repo, issues.filter((issue) => !draftNumbers.has(issue.number)))
+    .catch((e) => log("preview:error", { repo, error: String(e) }));
 }
 
 async function tick(cfg: Config) {
@@ -708,7 +826,7 @@ async function tick(cfg: Config) {
       log("finish:error", { repo: c.repo, issue: c.issue, error: String(e) });
     }
   }
-  containers = (await listContainers()).filter((c) => c.running);
+  containers = (await listContainers()).filter((c) => c.running || c.phase === "spec");
   const slots = { free: cfg.maxParallel - containers.length };
 
   // Ein fehlerhaftes Repo darf die anderen nicht blockieren

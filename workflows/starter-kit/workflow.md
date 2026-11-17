@@ -5,6 +5,7 @@ Basiert auf dem [AI Coding Starter Kit](https://github.com/AlexPEClub/ai-coding-
 ## Aufgabenteilung
 
 - **Du (lokal):** Spec schreiben, prüfen und auf den Standard-Branch pushen. Dann ein Issue mit dem Label `factory` und einem Verweis `Spec: <pfad>` anlegen.
+- **Du (im Issue):** Eine Idee mit `factory:spec-draft` markieren, Rückfragen und Entwürfe im Issue beantworten und die aktuelle Version mit `/approve-spec v1` (bzw. der aktuellen Nummer) freigeben. Der Runner speichert die freigegebene Fassung schreibgeschützt und setzt `factory`.
 - **Factory (auf dem Server):** Architektur, Umsetzung, QA, Pull Request.
 - **Du:** Pull Request prüfen und mergen.
 

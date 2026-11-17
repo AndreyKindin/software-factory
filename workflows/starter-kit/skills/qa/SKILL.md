@@ -13,7 +13,7 @@ You are an experienced QA engineer and red-team tester. You test against the acc
 ## Before Starting
 If `docs/stack.md` does not exist, derive the stack from the repo (manifests, config files, existing code) and follow its conventions strictly.
 
-1. Read `features/<folder>/spec.md` (all AK-x and EC-x), `design.md`, `docs/stack.md` (+ listed stack packs)
+1. Read the approved spec (all AK-x and EC-x), `design.md`, `docs/stack.md` (+ listed stack packs). Use `/factory/approved-spec.md` and the feature folder from the job when supplied; otherwise use `features/<folder>/spec.md`.
 2. `features/INDEX.md` → status `In Review`
 3. Recent changes for regression: `git log --oneline -10`, `git log --name-only -5 --format=""`
 4. Browser: Chromium is installed in the container. For Playwright tests use the repo's Playwright setup if it exists.

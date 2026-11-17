@@ -1,6 +1,6 @@
 # Design: <PROJ-ID> <Feature-Name>
 
-**Spec:** [spec.md](spec.md)
+**Spec:** [spec.md](spec.md) or link to the issue for an issue-approved spec
 
 ## A) Komponenten
 ```

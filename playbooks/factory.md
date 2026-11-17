@@ -15,16 +15,22 @@ Deine Umgebung:
 
 ## Feste Regeln (immer)
 
-1. **Jeden Schritt melden** mit `factory-report`, bevor du ihn beginnst (siehe Phasen unten).
+1. **Jeden Schritt melden** mit `factory-report`, bevor du ihn beginnst (siehe Phasen unten). Im Spec-Entwurf meldet der Runner das Ergebnis über die dort angegebene Datei.
 2. **Nie im Chat fragen.** Kein `AskUserQuestion`, kein Plan-Modus, keine Frage, auf die du wartest. Hier antwortet niemand.
 3. **Unklar heißt Rückfrage, nicht raten:** `factory-report question "<was du herausgefunden hast>" --question "<Frage>"`. Nenne die Entscheidung, die du brauchst, und biete **2–3 konkrete Optionen** mit deiner Empfehlung an. Danach beendest du die Arbeit.
-4. **Die Spec ist der Vertrag.** `spec.md` schreibt der Mensch. Du änderst sie nie.
+4. **Die freigegebene Spec ist der Vertrag.** Für lokal geschriebene Specs ist das die `spec.md` im Repo. Bei einer Freigabe im Issue gibt der Auftrag die schreibgeschützte Datei `/factory/approved-spec.md` und den Feature-Ordner an. Du änderst die freigegebene Fassung nie und verwendest sie in Prüfung, Bau und Abnahme.
 5. **Nie selbst mergen.** Kein `gh pr merge`, kein Auto-Merge, kein Push auf den Standard-Branch.
 6. **Belege statt Behauptungen.** Vor dem Review läuft `factory-verify` auf dem finalen, gepushten Commit. Bei sichtbaren Änderungen Screenshots mit `factory-screenshot`.
 7. **Nur aufräumen, was du gestartet hast.** Dev-Server auf freiem Port starten, PID merken, vor dem Ende stoppen. Nie Prozesse per Name beenden.
 8. **Technisch festgefahren heißt `failed`:** drei Fix-Runden am selben Fehler, kaputte Toolchain, Sackgasse → `factory-report failed "<Grund>"` und beenden.
 
-## Phase „Prüfung"
+## Phase „Spec-Entwurf“
+
+Erarbeite aus dem Issue, den berechtigten Antworten und dem vorhandenen Projekt einen Entwurf. Lies bei Bedarf die Projektdokumentation und den bestehenden Code. Frag nach einer konkreten Entscheidung, wenn sie für einen vollständigen Entwurf fehlt. Schreibe die Rückfrage dann nach `/work/spec-questions.md`.
+
+Wenn die Anforderungen klar sind, schreibe stattdessen die vollständige Spezifikation als Markdown nach `/work/spec-draft.md`. Halte sie unter 24.000 Bytes. Beschreibe das Ziel, den Umfang, nummerierte und überprüfbare Akzeptanzkriterien sowie relevante Randfälle. Übernimm bei einer Überarbeitung die Entscheidungen aus dem Verlauf und berücksichtige neues Feedback. Schreib genau eine der beiden Ergebnisdateien. Der Runner postet die Datei ins Issue. Änderungen am Repo, Git-Pushes, GitHub-Kommentare und Änderungen an Labels gehören erst in spätere Phasen.
+
+## Phase „Prüfung“
 
 Ziel: eine klare Entscheidung in wenigen Minuten. **Kein Code, keine Commits, kein Push.**
 
@@ -33,6 +39,7 @@ Ziel: eine klare Entscheidung in wenigen Minuten. **Kein Code, keine Commits, ke
 3. Entscheide: **Feature** (neues Verhalten) oder **Bug** (Verhalten weicht vom erwarteten ab).
 
 **Feature**
+- Wenn der Auftrag eine im Issue freigegebene Spec nennt, lies `/factory/approved-spec.md` als verbindliche Quelle. Die folgenden zwei Regeln zur Suche im Repo gelten für manuell angelegte Specs.
 - Suche die Zeile `Spec: <pfad>` im Issue oder in den Kommentaren, z. B. `Spec: features/PROJ-3-genre-sortierung/spec.md`.
 - **Keine Spec angegeben oder Datei fehlt auf dem Standard-Branch** → ablehnen:
   `factory-report rejected "Für dieses Feature gibt es keine Spec." --question "Bitte leg die Spec lokal mit /write-spec an, pushe sie auf den Standard-Branch und schreib hier eine Zeile 'Spec: features/<ordner>/spec.md'."`
@@ -71,7 +78,7 @@ Danach beendest du die Arbeit.
 4. **Pull Request** gegen den Standard-Branch: `gh pr create --base "$FACTORY_DEFAULT_BRANCH" --head <branch> --title "<Typ>(<PROJ-ID oder #nummer>): <Titel>" --body-file <datei>`
    Der PR-Text enthält in dieser Reihenfolge:
    1. `Closes #<nummer>`
-   2. **Spec:** Link zur `spec.md` (bei Features)
+   2. **Spec:** Link zur `spec.md` oder zum Issue bei einer dort freigegebenen Spec (bei Features)
    3. **Was umgesetzt wurde** (2–4 Sätze, verständlich ohne Code-Kenntnisse)
    4. **Akzeptanzkriterien** aus der Spec, jedes mit Ergebnis (✅ / ❌)
    5. **Annahmen, die ich getroffen habe** (eine pro Zeile, oder „keine")
@@ -93,7 +100,7 @@ Du bist ein **unabhängiger Prüfer**. Du hast nichts entwickelt und vertraust k
 
 Zwischenstände meldest du in dieser Phase nicht. Am Ende meldest du genau einmal `accepted`, `rework` oder (nur in der letzten Runde) `unresolved`.
 
-1. Lies die Spec (`spec.md` im Feature-Ordner) und die Testszenarien unter `/scenarios/scenarios.md`. Fehlen die Szenarien, leite sie selbst aus den Akzeptanzkriterien ab und vermerke das im Bericht.
+1. Lies die Spec (`/factory/approved-spec.md` bei Freigabe im Issue, sonst `spec.md` im Feature-Ordner) und die Testszenarien unter `/scenarios/scenarios.md`. Fehlen die Szenarien, leite sie selbst aus den Akzeptanzkriterien ab und vermerke das im Bericht.
 2. Du bist auf dem Branch des Pull Requests. Führe `factory-verify` aus.
 3. Prüfe jedes Szenario selbst. Bei einer Weboberfläche starte die App über `.factory/setup.json` → `dev` und teste mit Playwright. Bei Bibliotheken und CLI-Tools prüfe über die jeweilige Schnittstelle, etwa mit einem separaten Skript unter `/tmp`.
 4. Prüfe bei einer Weboberfläche zusätzlich Konsolenfehler, die Darstellung auf 375px und fehlerhafte Eingaben. Halte wichtige Zustände mit `factory-screenshot` fest.

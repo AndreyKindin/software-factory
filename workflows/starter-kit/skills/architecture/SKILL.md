@@ -16,7 +16,7 @@ No code in `design.md`: no SQL, no TypeScript, no snippets.
 ## Before Starting
 If `docs/stack.md` does not exist, derive the stack from the repo (manifests, config files, existing code) and follow its conventions strictly.
 
-1. Read `features/<folder>/spec.md`. It was written and approved by the human and is **read-only**: never change it. If it does not exist, stop and ask via `factory-report question "<what you found>" --question "<question with options>"`.
+1. Read the approved spec. If the job supplies `/factory/approved-spec.md`, use that file and the feature folder named in the job. Otherwise read `features/<folder>/spec.md`. The approved spec is **read-only**. If it is missing, stop and ask via `factory-report question "<what you found>" --question "<question with options>"`.
 2. Read `features/INDEX.md` and existing `design.md` files of related features
 3. Read `docs/stack.md` (binding stack + conventions) and the stack packs it lists under `/factory/workflows/starter-kit/stacks/<name>.md`. Read `docs/PRD.md`, `docs/design-system.md`, `docs/data-model.md` if present.
 4. Check what exists: `git ls-files | head -200`
@@ -36,5 +36,5 @@ Use [template.md](template.md):
 - **Decision Log** with alternative considered + trade-off
 
 ## After Saving
-- `features/INDEX.md` status → `Architected`
+- `features/INDEX.md` status → `Architected`. For an issue-approved feature, add its entry with a link to the issue if it is missing.
 - Commit: `docs(<PROJ-ID>): Architektur für <name> (#<issue-nr>)`

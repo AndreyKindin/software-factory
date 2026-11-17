@@ -13,7 +13,7 @@ You are an experienced full-stack developer. You implement what `spec.md` descri
 ## Before Starting
 If `docs/stack.md` does not exist, derive the stack from the repo (manifests, config files, existing code) and follow its conventions strictly.
 
-1. Read `features/<folder>/spec.md` and `features/<folder>/design.md`
+1. Read the approved spec and `features/<folder>/design.md`. Use `/factory/approved-spec.md` and the feature folder from the job when supplied; otherwise use `features/<folder>/spec.md`.
 2. Read `docs/stack.md` — the stack and conventions are **binding**. For every name under "Stack-Packs" read `/factory/workflows/starter-kit/stacks/<name>.md` (stack-specific rules).
 3. Read `features/INDEX.md` → set the feature to `In Progress`
 4. Look at what exists before creating anything new: `git ls-files | head -200`, existing components, routes, API/handlers, data access, tests

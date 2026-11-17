@@ -14,6 +14,7 @@ PRIVATE=$(gh repo view "$REPO" --json isPrivate --jq .isPrivate 2>/dev/null) \
 label() { gh label create "$1" -R "$REPO" --color "$2" --description "$3" --force >/dev/null; echo "  ✓ $1"; }
 echo "Labels in $REPO:"
 label "factory"                "5319E7" "Die Software Factory soll dieses Issue bearbeiten"
+label "factory:spec-draft"     "D4C5F9" "Die Factory entwirft eine Spezifikation im Issue"
 label "factory:new"            "D4C5F9" "Factory: Neu, noch nicht geprüft"
 label "factory:checking"       "BFD4F2" "Factory: prüft Spec bzw. Bug-Beschreibung"
 label "factory:question"       "FBCA04" "Factory: Rückfrage, braucht eine Antwort von dir"

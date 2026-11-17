@@ -18,7 +18,7 @@ const cfg = (extra: Partial<Config> = {}): Config => ({
   jobTimeoutMinutes: 90, image: "x", dataDir: tmp(), containerMemory: "3g", maxReworks: 2, ...extra,
 });
 const c = (login: string, body: string) => ({ author: { login }, body, createdAt: "2026-11-11T10:00:00Z" });
-const issue = (comments: any[]) => ({ number: 7, title: "T", body: "B", url: "u", labels: [], comments });
+const issue = (comments: any[]) => ({ number: 7, title: "T", body: "B", url: "u", labels: [] as { name: string }[], comments });
 
 // ---------- Dateien aus dem Job-Ordner ----------
 
@@ -146,17 +146,21 @@ test("factory-verify: grün nur, wenn alle Checks bestehen", () => {
 
 // ---------- Auswertung eines beendeten Laufs (GitHub und Docker simuliert) ----------
 
-import { finish } from "./main.ts";
+import { finish, specDraftAction, tick } from "./main.ts";
 
 type Call = { cmd: string[]; stdin: string };
 const calls: Call[] = [];
 let headSha = "abc1234";
+let draftIssue: (ReturnType<typeof issue> & { state: string }) | undefined;
 (globalThis as any).Bun = {
   spawn(cmd: string[], opts: any) {
     const call: Call = { cmd, stdin: "" };
     calls.push(call);
     let out = "";
-    if (cmd[0] === "gh" && cmd[1] === "issue" && cmd[2] === "view") out = JSON.stringify(issue([]));
+    if (cmd[0] === "gh" && cmd[1] === "issue" && cmd[2] === "view") out = JSON.stringify(draftIssue ?? issue([]));
+    if (cmd[0] === "gh" && cmd[1] === "issue" && cmd[2] === "list") {
+      out = JSON.stringify(draftIssue && cmd.includes("factory:spec-draft") ? [draftIssue] : []);
+    }
     if (cmd[0] === "gh" && cmd[1] === "api" && String(cmd[2]).includes("/git/ref/heads/")) out = headSha + "\n";
     if (cmd[0] === "gh" && cmd[1] === "pr" && cmd[2] === "diff") out = "src/app/page.tsx\n";
     return {
@@ -165,6 +169,49 @@ let headSha = "abc1234";
     };
   },
 };
+
+test("Spec-Entwurf: Nur eine berechtigte Freigabe der veröffentlichten Version startet die Prüfung", async () => {
+  const config = cfg({ repos: ["a/b"], allowedUsers: ["andrey"] });
+  const dir = join(config.dataDir, "drafts", "a__b__7");
+  mkdirSync(dir, { recursive: true });
+  const markdown = "# Suche\n\nAK-1: Suche findet vorhandene Artikel.";
+  writeFileSync(join(dir, "spec-draft.md"), markdown + "\n");
+  const container = { name: "sf-a-b-7", repo: "a/b", issue: 7, phase: "spec" as const, mode: "new", running: false,
+    startedAt: "2026-11-11T10:00:00Z", finishedAt: "2026-11-11T10:05:00Z", exitCode: 0 };
+  draftIssue = { ...issue([]), state: "OPEN", labels: [{ name: "factory:spec-draft" }] };
+  try {
+    calls.length = 0;
+    await finish(config, container);
+    const posted = calls.find((call) => call.cmd[1] === "issue" && call.cmd[2] === "comment");
+    assert.ok(posted?.stdin.includes("### Spec v1"));
+    const draft = c("alex", posted.stdin);
+
+    assert.equal(specDraftAction(config, issue([draft, c("fremd", "/approve-spec v1")])).kind, "wait");
+    assert.equal(specDraftAction(config, issue([draft, c("andrey", "/approve-spec v2")])).kind, "wait");
+    const changed = c("alex", posted.stdin.replace("vorhandene", "gelöschte"));
+    assert.equal(specDraftAction(config, issue([changed, c("andrey", "/approve-spec v1")])).kind, "wait");
+    assert.equal(specDraftAction(config, issue([draft, c("andrey", "Bitte den leeren Zustand ergänzen.")])).kind, "draft");
+
+    // Ein verlorener Cleanup oder eine wiederholte Auswertung erzeugt keine zweite Version.
+    draftIssue.comments = [draft];
+    calls.length = 0;
+    await finish(config, container);
+    assert.ok(!calls.some((call) => call.cmd[2] === "comment"));
+
+    draftIssue.comments.push(c("andrey", "/approve-spec v1"));
+    calls.length = 0;
+    await tick(config);
+    assert.equal(readFileSync(join(config.dataDir, "state", "a__b__7.json.spec.md"), "utf8"), markdown + "\n");
+    const edit = calls.find((call) => call.cmd[1] === "issue" && call.cmd[2] === "edit");
+    assert.deepEqual(edit?.cmd.slice(-4), ["--add-label", "factory", "--remove-label", "factory:spec-draft"]);
+    for (const phase of ["check", "build", "accept"] as const) {
+      assert.match(buildPrompt(config, "a/b", draftIssue, phase, "new", undefined, undefined, true),
+        /Verbindliche Spec: \/factory\/approved-spec\.md/);
+    }
+  } finally {
+    draftIssue = undefined;
+  }
+});
 
 async function finishRun(phase: "check" | "build" | "accept", files: Record<string, string>, exitCode = 0, reason?: string) {
   const config = cfg();

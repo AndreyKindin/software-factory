@@ -1,6 +1,6 @@
 # QA-Bericht: <PROJ-ID> <Feature-Name> (#<issue-nr>)
 
-**Spec:** [spec.md](spec.md) · **Design:** [design.md](design.md)
+**Spec:** [spec.md](spec.md) or link to the issue for an issue-approved spec · **Design:** [design.md](design.md)
 **Getestet am:** YYYY-MM-DD · **Commit:** `<sha>`
 
 ## Ergebnis
